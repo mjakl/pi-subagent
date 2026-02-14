@@ -82,6 +82,7 @@ function buildPiArgs(agent: AgentConfig, systemPromptPath: string | null, task: 
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
 	if (agent.provider) args.push("--provider", agent.provider);
 	if (agent.model) args.push("--model", agent.model);
+	if (agent.thinking) args.push("--thinking", agent.thinking);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 	if (systemPromptPath) args.push("--append-system-prompt", systemPromptPath);
 	args.push(`Task: ${task}`);

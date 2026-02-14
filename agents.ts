@@ -22,6 +22,7 @@ export interface AgentConfig {
 	tools?: string[];
 	model?: string;
 	provider?: string;
+	thinking?: string;
 	systemPrompt: string;
 	source: "user" | "project";
 	filePath: string;
@@ -71,6 +72,7 @@ function parseAgentFile(filePath: string, source: "user" | "project"): AgentConf
 		tools: tools && tools.length > 0 ? tools : undefined,
 		model: frontmatter.model,
 		provider: frontmatter.provider,
+		thinking: frontmatter.thinking,
 		systemPrompt: body,
 		source,
 		filePath,
