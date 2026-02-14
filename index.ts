@@ -9,10 +9,9 @@
  *   - Parallel: { tasks: [{ agent: "name", task: "..." }, ...] }
  */
 
-import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
+import { type AgentConfig, discoverAgents } from "./agents.js";
 import { renderCall, renderResult } from "./render.js";
 import { mapConcurrent, runAgent } from "./runner.js";
 import { type SingleResult, type SubagentDetails, emptyUsage, getFinalOutput, isResultError } from "./types.js";
@@ -34,16 +33,10 @@ const TaskItem = Type.Object({
 	cwd: Type.Optional(Type.String({ description: "Working directory for this agent's process" })),
 });
 
-const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
-	description: 'Which agent directories to search. "user" = ~/.pi/agent/agents, "project" = .pi/agents in repo, "both" = both (project overrides user on name conflict). Default: "user".',
-	default: "user",
-});
-
 const SubagentParams = Type.Object({
 	agent: Type.Optional(Type.String({ description: "Agent name for single mode. Must match an available agent name exactly." })),
 	task: Type.Optional(Type.String({ description: "Task description for single mode. Must be self-contained — the subagent has no access to your conversation history." })),
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "For parallel mode: array of {agent, task} objects. Each task runs in an isolated process concurrently. Do NOT set agent/task when using this." })),
-	agentScope: Type.Optional(AgentScopeSchema),
 	confirmProjectAgents: Type.Optional(
 		Type.Boolean({ description: "Whether to prompt the user before running project-local agents. Default: true.", default: true }),
 	),
@@ -54,9 +47,9 @@ const SubagentParams = Type.Object({
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeDetailsFactory(agentScope: AgentScope, projectAgentsDir: string | null) {
+function makeDetailsFactory(projectAgentsDir: string | null) {
 	return (mode: "single" | "parallel") =>
-		(results: SingleResult[]): SubagentDetails => ({ mode, agentScope, projectAgentsDir, results });
+		(results: SingleResult[]): SubagentDetails => ({ mode, projectAgentsDir, results });
 }
 
 function formatAgentNames(agents: AgentConfig[]): string {
@@ -158,10 +151,9 @@ Use single mode for one task, parallel mode when tasks are independent and can r
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const agentScope: AgentScope = params.agentScope ?? "user";
-			const discovery = discoverAgents(ctx.cwd, agentScope);
+			const discovery = discoverAgents(ctx.cwd, "both");
 			const { agents } = discovery;
-			const makeDetails = makeDetailsFactory(agentScope, discovery.projectAgentsDir);
+			const makeDetails = makeDetailsFactory(discovery.projectAgentsDir);
 
 			// Validate: exactly one mode must be specified
 			const hasTasks = (params.tasks?.length ?? 0) > 0;
@@ -174,7 +166,7 @@ Use single mode for one task, parallel mode when tasks are independent and can r
 			}
 
 			// Security: confirm project-local agents before running
-			if ((agentScope === "project" || agentScope === "both") && (params.confirmProjectAgents ?? true) && ctx.hasUI) {
+			if ((params.confirmProjectAgents ?? true) && ctx.hasUI) {
 				const requested = new Set<string>();
 				if (params.tasks) for (const t of params.tasks) requested.add(t.agent);
 				if (params.agent) requested.add(params.agent);

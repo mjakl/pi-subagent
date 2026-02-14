@@ -3,7 +3,6 @@
  */
 
 import type { Message } from "@mariozechner/pi-ai";
-import type { AgentScope } from "./agents.js";
 
 /** Aggregated token usage from a subagent run. */
 export interface UsageStats {
@@ -33,7 +32,6 @@ export interface SingleResult {
 /** Metadata attached to every tool result for rendering. */
 export interface SubagentDetails {
 	mode: "single" | "parallel";
-	agentScope: AgentScope;
 	projectAgentsDir: string | null;
 	results: SingleResult[];
 }

@@ -5,7 +5,6 @@
 import * as os from "node:os";
 import { getMarkdownTheme } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
-import type { AgentScope } from "./agents.js";
 import {
 	type DisplayItem,
 	type SingleResult,
@@ -128,13 +127,10 @@ function statusIcon(r: SingleResult, theme: { fg: ThemeFg }): string {
 // ---------------------------------------------------------------------------
 
 export function renderCall(args: Record<string, any>, theme: { fg: ThemeFg; bold: (s: string) => string }): Text {
-	const scope: AgentScope = args.agentScope ?? "user";
-
 	if (args.tasks && args.tasks.length > 0) {
 		let text =
 			theme.fg("toolTitle", theme.bold("subagent ")) +
-			theme.fg("accent", `parallel (${args.tasks.length} tasks)`) +
-			theme.fg("muted", ` [${scope}]`);
+			theme.fg("accent", `parallel (${args.tasks.length} tasks)`);
 		for (const t of args.tasks.slice(0, 3)) {
 			text += `\n  ${theme.fg("accent", t.agent)}${theme.fg("dim", ` ${truncate(t.task, 40)}`)}`;
 		}
@@ -147,8 +143,7 @@ export function renderCall(args: Record<string, any>, theme: { fg: ThemeFg; bold
 	const preview = args.task ? truncate(args.task, 60) : "...";
 	let text =
 		theme.fg("toolTitle", theme.bold("subagent ")) +
-		theme.fg("accent", agentName) +
-		theme.fg("muted", ` [${scope}]`);
+		theme.fg("accent", agentName);
 	text += `\n  ${theme.fg("dim", preview)}`;
 	return new Text(text, 0, 0);
 }

@@ -36,7 +36,9 @@ npm install
 Subagents are defined as Markdown files with YAML frontmatter.
 
 **User Agents:** `~/.pi/agent/agents/*.md`
-**Project Agents:** `.pi/agents/*.md` (requires `agentScope: "both"`)
+**Project Agents:** `.pi/agents/*.md`
+
+The extension always loads agents from both locations. If a project agent shares a name with a user agent, the project agent wins. When project agents are requested, Pi will prompt for confirmation before running them.
 
 Example agent (`~/.pi/agent/agents/writer.md`):
 
