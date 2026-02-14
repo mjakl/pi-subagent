@@ -86,39 +86,6 @@ Available Tools (default: `read`, `bash`, `edit`, `write`):
 - `find`  — Find files by glob pattern (read-only, off by default)
 - `ls`    — List directory contents (read-only, off by default)
 
-## Usage
-
-### Single Task
-
-```typescript
-subagent({
-  agent: "writer",
-  task: "Rewrite the README.md to be more professional."
-})
-```
-
-### Parallel Tasks
-
-```typescript
-subagent({
-  tasks: [
-    { agent: "tester", task: "Write unit tests for index.ts" },
-    { agent: "writer", task: "Document the API in index.ts" }
-  ]
-})
-```
-
-### Parameters
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `agent` | string | Name of the agent (single mode) |
-| `task` | string | Task description (single mode) |
-| `tasks` | array | List of `{agent, task, cwd?}` for parallel execution |
-| `agentScope` | `"user"` \| `"project"` \| `"both"` | Where to look for agents. Default: `"user"` |
-| `confirmProjectAgents` | boolean | Prompt before running project-local agents. Default: `true` |
-| `cwd` | string | Working directory override (single mode) |
-
 ## How Communication Works
 
 ### The Isolation Model
