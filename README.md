@@ -61,7 +61,7 @@ You are an expert technical writer. Your task is to improve the clarity and conc
 
 Notes:
 - `tools` only controls built-in tools. Extension tools remain available unless extensions are disabled.
-- The Markdown body below the frontmatter becomes the agent's system prompt.
+- The Markdown body below the frontmatter becomes the agent's system prompt and is **appended** to Pi's default system prompt (it does **not** replace it).
 
 ## Usage
 
