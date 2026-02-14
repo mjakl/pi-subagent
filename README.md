@@ -8,7 +8,7 @@
 
 **Isolated Context** — Each subagent runs in its own process with its own context, preventing the main agent's context from becoming cluttered.
 
-**Parallel & Chain Execution** — Run multiple agents at once or chain them together where one agent's output becomes another's input.
+**Parallel Execution** — Run multiple agents at once.
 
 ## Install
 
@@ -70,21 +70,12 @@ subagent({
     { agent: "writer", task: "Document the API in index.ts" }
   ]
 })
-
-// Chained tasks
-subagent({
-  chain: [
-    { agent: "researcher", task: "Find the best way to implement X" },
-    { agent: "coder", task: "Implement X based on this: {previous}" }
-  ]
-})
 ```
 
 **Parameters:**
 - `agent` (string) - Name of the agent (single mode)
 - `task` (string) - Task description (single mode)
 - `tasks` (array) - List of `{agent, task}` for parallel execution
-- `chain` (array) - List of `{agent, task}` for sequential execution. Use `{previous}` in the task to inject the output of the previous step.
 - `agentScope` ("user" | "project" | "both") - Where to look for agents. Default: "user".
 - `cwd` (string, optional) - Working directory for the subagent.
 
