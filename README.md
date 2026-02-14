@@ -52,14 +52,16 @@ You are an expert technical writer. Your task is to improve the clarity and conc
 
 ### Frontmatter Fields
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | Yes | Agent identifier used in tool calls |
-| `description` | Yes | What the agent does (shown to the main agent) |
-| `model` | No | LLM model override |
-| `tools` | No | Comma-separated list of tools to enable |
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `name` | Yes | — | Agent identifier used in tool calls (must match exactly) |
+| `description` | Yes | — | What the agent does (shown to the main agent) |
+| `model` | No | Uses the default pi model | Overrides the model for this agent (e.g. `anthropic/claude-3-5-sonnet`) |
+| `tools` | No | `read,bash,edit,write` | Comma-separated list of **built-in** tools to enable for this agent. If omitted, defaults apply. |
 
-The Markdown body below the frontmatter becomes the agent's system prompt.
+Notes:
+- `tools` only controls built-in tools. Extension tools remain available unless extensions are disabled.
+- The Markdown body below the frontmatter becomes the agent's system prompt.
 
 ## Usage
 
