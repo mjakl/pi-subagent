@@ -2,6 +2,8 @@
 
 **Delegate tasks to specialized subagents with isolated context windows.**
 
+There are many subagent extensions for pi, this one is mine.
+
 ## Why Pi Subagent
 
 **Specialization** — Use tailored agents for specific tasks like refactoring, documentation, or research.
