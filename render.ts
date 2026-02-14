@@ -111,7 +111,7 @@ function renderDisplayItems(
 			const preview = expanded ? item.text : item.text.split("\n").slice(0, 3).join("\n");
 			text += `${theme.fg("toolOutput", preview)}\n`;
 		} else {
-			text += `${theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg)}\n`;
+			text += `${theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme))}\n`;
 		}
 	}
 	return text.trimEnd();
@@ -221,7 +221,7 @@ function renderSingleExpanded(
 	} else {
 		for (const item of displayItems) {
 			if (item.type === "toolCall") {
-				container.addChild(new Text(theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg), 0, 0));
+				container.addChild(new Text(theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)), 0, 0));
 			}
 		}
 		if (finalOutput) {
@@ -319,7 +319,7 @@ function renderParallelExpanded(
 
 		for (const item of displayItems) {
 			if (item.type === "toolCall") {
-				container.addChild(new Text(theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg), 0, 0));
+				container.addChild(new Text(theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)), 0, 0));
 			}
 		}
 
