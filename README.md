@@ -90,6 +90,8 @@ Available Tools (default: `read`, `bash`, `edit`, `write`):
 - `find`  — Find files by glob pattern (read-only, off by default)
 - `ls`    — List directory contents (read-only, off by default)
 
+Tip: for a read-only tool selection, use `read,find,ls,grep`. As soon as you include `edit`, `write`, or `bash`, the agent can practically go wild.
+
 ## How Communication Works
 
 ### The Isolation Model
