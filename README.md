@@ -50,6 +50,8 @@ tools: read, write
 You are an expert technical writer. Your task is to improve the clarity and conciseness of the provided text.
 ```
 
+Note: this repository includes a sample agent in `agents/oracle.md` for reference.
+
 ### Frontmatter Fields
 
 | Field | Required | Default | Description |
@@ -65,6 +67,12 @@ Notes:
 - `thinking` uses the same values as Pi's `--thinking` flag; it's recommended to set it explicitly since thinking support varies by model.
 - `tools` only controls built-in tools. Extension tools remain available unless extensions are disabled.
 - The Markdown body below the frontmatter becomes the agent's system prompt and is **appended** to Pi's default system prompt (it does **not** replace it).
+
+### Writing a Good Agent File
+
+- **Description matters** — the main agent uses the `description` to decide which subagent to call, so be specific about what the agent is good at.
+- **Tool scope is optional but helpful** — reducing tools can keep the agent focused, but you can leave defaults if unsure.
+- **Model + thinking is the power combo** — selecting the right model and thinking level is often the biggest quality boost.
 
 ### Available Built-in Tools
 
