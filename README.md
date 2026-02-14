@@ -155,6 +155,10 @@ render.ts   — TUI rendering: renderCall and renderResult for the subagent tool
 types.ts    — Shared types and pure helper functions
 ```
 
+## Attribution
+
+Inspired by implementations from [vaayne/agent-kit](https://github.com/vaayne/agent-kit) and [mariozechner/pi-mono](https://github.com/badlogic/pi-mono).
+
 ## License
 
 MIT
