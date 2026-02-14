@@ -80,6 +80,7 @@ function processJsonLine(line: string, result: SingleResult): boolean {
 
 function buildPiArgs(agent: AgentConfig, systemPromptPath: string | null, task: string): string[] {
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
+	if (agent.provider) args.push("--provider", agent.provider);
 	if (agent.model) args.push("--model", agent.model);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 	if (systemPromptPath) args.push("--append-system-prompt", systemPromptPath);
