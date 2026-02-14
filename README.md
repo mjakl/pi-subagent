@@ -94,6 +94,56 @@ subagent({
 | `confirmProjectAgents` | boolean | Prompt before running project-local agents. Default: `true` |
 | `cwd` | string | Working directory override (single mode) |
 
+## How Communication Works
+
+### The Isolation Model
+
+Each subagent runs as a **completely isolated process**:
+- ❌ Cannot see the main agent's conversation history
+- ❌ Cannot see other subagents' work
+- ❌ Cannot access shared memory or state
+- ✅ Receives only: its system prompt (from the .md file) + your task string
+- ✅ Has its own fresh context window
+
+### What Gets Sent to Subagents
+
+When you call `subagent({ agent: "writer", task: "Document the API" })`, the subagent receives:
+
+```
+[System Prompt from ~/.pi/agent/agents/writer.md]
+
+User: Task: Document the API
+```
+
+Nothing else. No file contents, no conversation history, no prior context. **You must include all necessary context in the task string itself** (file paths, requirements, code snippets).
+
+### What Comes Back to the Main Agent
+
+| Data | Main Agent Sees | TUI Shows |
+|------|-----------------|-----------|
+| Final text output | ✅ Yes — full, unbounded | ✅ Yes |
+| Tool calls made by subagent | ❌ No | ✅ Yes (expanded view) |
+| Token usage / cost | ❌ No | ✅ Yes |
+| Reasoning/thinking steps | ❌ No | ❌ No |
+| Error messages | ✅ Yes (on failure) | ✅ Yes |
+
+**Key point:** The main agent receives **only the final assistant text** from each subagent. Not the tool calls, not the reasoning, not the intermediate steps. This prevents context pollution while still giving you the results.
+
+### Parallel Mode Behavior
+
+When running multiple agents in parallel:
+- All subagents start simultaneously (up to 4 concurrent)
+- Each runs in complete isolation
+- Main agent receives a combined result after all finish:
+
+```
+Parallel: 3/3 succeeded
+
+[writer] completed: Full output text here...
+[tester] completed: Full output text here...
+[reviewer] completed: Full output text here...
+```
+
 ## Features
 
 - **Auto-Discovery** — Agents are found at startup and their descriptions are injected into the main agent's system prompt.
