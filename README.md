@@ -10,6 +10,8 @@
 
 **Parallel Execution** — Run multiple agents at once.
 
+**A Simpler Fork** — This extension intentionally trims features from other implementations (like chaining and scope selectors) to keep the surface area small and predictable. If you want the minimal, “just delegate” experience, this is it.
+
 ## Install
 
 ### Option 1: Install via Pi
