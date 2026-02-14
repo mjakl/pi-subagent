@@ -22,6 +22,7 @@ import { type SingleResult, type SubagentDetails, emptyUsage, getFinalOutput, is
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
+const PARALLEL_HEARTBEAT_MS = 1000;
 
 // ---------------------------------------------------------------------------
 // Tool parameter schema
@@ -275,26 +276,39 @@ Use single mode for one task, parallel mode when tasks are independent and can r
 			});
 		};
 
-		const results = await mapConcurrent(tasks, MAX_CONCURRENCY, async (t, index) => {
-			const result = await runAgent({
-				cwd: defaultCwd,
-				agents,
-				agentName: t.agent,
-				task: t.task,
-				taskCwd: t.cwd,
-				signal,
-				onUpdate: (partial) => {
-					if (partial.details?.results[0]) {
-						allResults[index] = partial.details.results[0];
-						emitProgress();
-					}
-				},
-				makeDetails: makeDetails("parallel"),
-			});
-			allResults[index] = result;
+		let heartbeat: NodeJS.Timeout | undefined;
+		if (onUpdate) {
 			emitProgress();
-			return result;
-		});
+			heartbeat = setInterval(() => {
+				if (allResults.some((r) => r.exitCode === -1)) emitProgress();
+			}, PARALLEL_HEARTBEAT_MS);
+		}
+
+		let results: SingleResult[];
+		try {
+			results = await mapConcurrent(tasks, MAX_CONCURRENCY, async (t, index) => {
+				const result = await runAgent({
+					cwd: defaultCwd,
+					agents,
+					agentName: t.agent,
+					task: t.task,
+					taskCwd: t.cwd,
+					signal,
+					onUpdate: (partial) => {
+						if (partial.details?.results[0]) {
+							allResults[index] = partial.details.results[0];
+							emitProgress();
+						}
+					},
+					makeDetails: makeDetails("parallel"),
+				});
+				allResults[index] = result;
+				emitProgress();
+				return result;
+			});
+		} finally {
+			if (heartbeat) clearInterval(heartbeat);
+		}
 
 		const successCount = results.filter((r) => r.exitCode === 0).length;
 		const summaries = results.map((r) => {
