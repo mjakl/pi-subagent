@@ -307,8 +307,7 @@ Use single mode for one task, parallel mode when tasks are independent and can r
 		const successCount = results.filter((r) => r.exitCode === 0).length;
 		const summaries = results.map((r) => {
 			const output = getFinalOutput(r.messages);
-			const preview = output.length > 100 ? `${output.slice(0, 100)}...` : output;
-			return `[${r.agent}] ${r.exitCode === 0 ? "completed" : "failed"}: ${preview || "(no output)"}`;
+			return `[${r.agent}] ${r.exitCode === 0 ? "completed" : "failed"}: ${output || "(no output)"}`;
 		});
 
 		return {
