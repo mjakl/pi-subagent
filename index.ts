@@ -29,25 +29,25 @@ const MAX_CONCURRENCY = 4;
 // ---------------------------------------------------------------------------
 
 const TaskItem = Type.Object({
-	agent: Type.String({ description: "Name of the agent to invoke" }),
-	task: Type.String({ description: "Task to delegate to the agent" }),
-	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
+	agent: Type.String({ description: "Name of an available agent (must match exactly)" }),
+	task: Type.String({ description: "Self-contained task description with all necessary context. The subagent cannot see your conversation." }),
+	cwd: Type.Optional(Type.String({ description: "Working directory for this agent's process" })),
 });
 
 const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
-	description: 'Which agent directories to use. Default: "user". Use "both" to include project-local agents.',
+	description: 'Which agent directories to search. "user" = ~/.pi/agent/agents, "project" = .pi/agents in repo, "both" = both (project overrides user on name conflict). Default: "user".',
 	default: "user",
 });
 
 const SubagentParams = Type.Object({
-	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
-	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
-	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
+	agent: Type.Optional(Type.String({ description: "Agent name for single mode. Must match an available agent name exactly." })),
+	task: Type.Optional(Type.String({ description: "Task description for single mode. Must be self-contained — the subagent has no access to your conversation history." })),
+	tasks: Type.Optional(Type.Array(TaskItem, { description: "For parallel mode: array of {agent, task} objects. Each task runs in an isolated process concurrently. Do NOT set agent/task when using this." })),
 	agentScope: Type.Optional(AgentScopeSchema),
 	confirmProjectAgents: Type.Optional(
-		Type.Boolean({ description: "Prompt before running project-local agents. Default: true.", default: true }),
+		Type.Boolean({ description: "Whether to prompt the user before running project-local agents. Default: true.", default: true }),
 	),
-	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
+	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode only)" })),
 });
 
 // ---------------------------------------------------------------------------
@@ -113,7 +113,28 @@ export default function (pi: ExtensionAPI) {
 		return {
 			systemPrompt:
 				event.systemPrompt +
-				`\n\n## Available Subagents\n\nThe following subagents are available for delegation via the \`subagent\` tool:\n\n${agentList}\n\nUse the subagent tool to delegate tasks to these specialized agents when appropriate.\n`,
+				`\n\n## Available Subagents
+
+The following subagents are available via the \`subagent\` tool:
+
+${agentList}
+
+### How to call the subagent tool
+
+Each subagent runs in an **isolated process** with no access to your conversation. Task descriptions must be **self-contained** with all necessary context (file paths, requirements, constraints).
+
+**Single mode** — delegate one task:
+\`\`\`json
+{ "agent": "agent-name", "task": "Detailed, self-contained task description..." }
+\`\`\`
+
+**Parallel mode** — run multiple tasks concurrently (do NOT also set agent/task):
+\`\`\`json
+{ "tasks": [{ "agent": "agent-name", "task": "..." }, { "agent": "other-agent", "task": "..." }] }
+\`\`\`
+
+Use single mode for one task, parallel mode when tasks are independent and can run simultaneously.
+`,
 		};
 	});
 
@@ -122,11 +143,18 @@ export default function (pi: ExtensionAPI) {
 		name: "subagent",
 		label: "Subagent",
 		description: [
-			"Delegate tasks to specialized subagents with isolated context.",
-			"Modes: single (agent + task), parallel (tasks array).",
-			'Default agent scope is "user" (from ~/.pi/agent/agents).',
-			'To enable project-local agents in .pi/agents, set agentScope: "both" (or "project").',
-		].join(" "),
+			"Delegate a task to a specialized subagent running in its own isolated pi process.",
+			"",
+			"IMPORTANT: Use exactly ONE of these two modes:",
+			"  Single mode:   set `agent` and `task` (both required together).",
+			"  Parallel mode: set `tasks` array (do NOT also set `agent`/`task`).",
+			"",
+			"Each subagent runs with a fresh context — it cannot see your conversation.",
+			"Write task descriptions that are fully self-contained with all needed context.",
+			"",
+			"Example single:   { agent: \"writer\", task: \"Rewrite README.md to be concise\" }",
+			"Example parallel: { tasks: [{ agent: \"writer\", task: \"...\" }, { agent: \"tester\", task: \"...\" }] }",
+		].join("\n"),
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
