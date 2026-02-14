@@ -62,7 +62,7 @@ export function aggregateUsage(results: SingleResult[]): UsageStats {
 
 /** Whether a result represents an error. */
 export function isResultError(r: SingleResult): boolean {
-	return r.exitCode !== 0 || r.stopReason === "error" || r.stopReason === "aborted";
+	return r.exitCode > 0 || r.stopReason === "error" || r.stopReason === "aborted";
 }
 
 /** Extract the last assistant text from a message history. */

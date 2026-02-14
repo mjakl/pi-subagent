@@ -137,7 +137,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
 		agent: agentName,
 		agentSource: agent.source,
 		task,
-		exitCode: 0,
+		exitCode: -1,
 		messages: [],
 		stderr: "",
 		usage: emptyUsage(),
