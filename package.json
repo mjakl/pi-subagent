@@ -12,7 +12,8 @@
   "keywords": [
     "pi",
     "subagent",
-    "delegation"
+    "delegation",
+    "pi-package"
   ],
   "license": "MIT",
   "devDependencies": {
