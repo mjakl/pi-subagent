@@ -62,7 +62,7 @@ You are an expert technical writer. Your task is to improve the clarity and conc
 
 Notes:
 - `model` accepts `provider/model` syntax — this is a Pi feature. Use it when multiple providers offer the same model ID.
-- `thinking` uses the same values as Pi's `--thinking` flag.
+- `thinking` uses the same values as Pi's `--thinking` flag; it's recommended to set it explicitly since thinking support varies by model.
 - `tools` only controls built-in tools. Extension tools remain available unless extensions are disabled.
 - The Markdown body below the frontmatter becomes the agent's system prompt and is **appended** to Pi's default system prompt (it does **not** replace it).
 
