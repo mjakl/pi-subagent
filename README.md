@@ -66,6 +66,18 @@ Notes:
 - `tools` only controls built-in tools. Extension tools remain available unless extensions are disabled.
 - The Markdown body below the frontmatter becomes the agent's system prompt and is **appended** to Pi's default system prompt (it does **not** replace it).
 
+### Available Built-in Tools
+
+Available Tools (default: `read`, `bash`, `edit`, `write`):
+
+- `read`  — Read file contents
+- `bash`  — Execute bash commands
+- `edit`  — Edit files with find/replace
+- `write` — Write files (creates/overwrites)
+- `grep`  — Search file contents (read-only, off by default)
+- `find`  — Find files by glob pattern (read-only, off by default)
+- `ls`    — List directory contents (read-only, off by default)
+
 ## Usage
 
 ### Single Task
