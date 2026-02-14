@@ -50,20 +50,31 @@ tools: read, write
 You are an expert technical writer. Your task is to improve the clarity and conciseness of the provided text.
 ```
 
+### Frontmatter Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Agent identifier used in tool calls |
+| `description` | Yes | What the agent does (shown to the main agent) |
+| `model` | No | LLM model override |
+| `tools` | No | Comma-separated list of tools to enable |
+
+The Markdown body below the frontmatter becomes the agent's system prompt.
+
 ## Usage
 
-### subagent
-
-Delegate a task to a specialized agent.
+### Single Task
 
 ```typescript
-// Single task
-subagent({ 
-  agent: "writer", 
-  task: "Rewrite the README.md to be more professional." 
+subagent({
+  agent: "writer",
+  task: "Rewrite the README.md to be more professional."
 })
+```
 
-// Parallel tasks
+### Parallel Tasks
+
+```typescript
 subagent({
   tasks: [
     { agent: "tester", task: "Write unit tests for index.ts" },
@@ -72,22 +83,33 @@ subagent({
 })
 ```
 
-**Parameters:**
-- `agent` (string) - Name of the agent (single mode)
-- `task` (string) - Task description (single mode)
-- `tasks` (array) - List of `{agent, task}` for parallel execution
-- `agentScope` ("user" | "project" | "both") - Where to look for agents. Default: "user".
-- `cwd` (string, optional) - Working directory for the subagent.
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `agent` | string | Name of the agent (single mode) |
+| `task` | string | Task description (single mode) |
+| `tasks` | array | List of `{agent, task, cwd?}` for parallel execution |
+| `agentScope` | `"user"` \| `"project"` \| `"both"` | Where to look for agents. Default: `"user"` |
+| `confirmProjectAgents` | boolean | Prompt before running project-local agents. Default: `true` |
+| `cwd` | string | Working directory override (single mode) |
 
 ## Features
 
-- **Streaming Updates**: Watch the subagent's progress in real-time.
-- **TUI Integration**: Rich rendering of tool calls and outputs from subagents.
-- **Auto-Discovery**: Subagents are automatically found and their descriptions are added to your main agent's system prompt.
+- **Auto-Discovery** — Agents are found at startup and their descriptions are injected into the main agent's system prompt.
+- **Streaming Updates** — Watch subagent progress in real-time as tool calls and outputs stream in.
+- **Rich TUI Rendering** — Collapsed/expanded views with usage stats, tool call previews, and markdown output.
+- **Security Confirmation** — Project-local agents require explicit user approval before execution.
 
-## Author
+## Project Structure
 
-Inspired by implementations from [vaayne](https://github.com/vaayne/agent-kit) and [mariozechner](https://github.com/badlogic/pi-mono).
+```
+index.ts    — Extension entry point: lifecycle hooks, tool registration, mode orchestration
+agents.ts   — Agent discovery: reads and parses .md files from user/project directories
+runner.ts   — Process runner: spawns `pi` subprocesses and streams JSON events
+render.ts   — TUI rendering: renderCall and renderResult for the subagent tool
+types.ts    — Shared types and pure helper functions
+```
 
 ## License
 
