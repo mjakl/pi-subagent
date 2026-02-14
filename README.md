@@ -56,13 +56,12 @@ You are an expert technical writer. Your task is to improve the clarity and conc
 |-------|----------|---------|-------------|
 | `name` | Yes | — | Agent identifier used in tool calls (must match exactly) |
 | `description` | Yes | — | What the agent does (shown to the main agent) |
-| `provider` | No | Uses Pi's normal model resolution | Explicit provider to use when resolving the model (e.g. `anthropic`, `openrouter`). Only meaningful if `model` is set. |
-| `model` | No | Uses the default pi model | Overrides the model for this agent (e.g. `anthropic/claude-3-5-sonnet`). If you need a specific provider, prefer a provider-prefixed model ID or set `provider`. |
+| `model` | No | Uses the default pi model | Overrides the model for this agent. You can include a provider prefix (e.g. `anthropic/claude-3-5-sonnet` or `openrouter/claude-3.5-sonnet`) to force a specific provider. |
 | `thinking` | No | Uses Pi's default thinking level | Sets the thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`). Equivalent to `--thinking`. |
 | `tools` | No | `read,bash,edit,write` | Comma-separated list of **built-in** tools to enable for this agent. If omitted, defaults apply. |
 
 Notes:
-- `provider` is optional. If `model` already includes a provider prefix (`provider/model`), you can omit `provider`.
+- `model` accepts `provider/model` syntax — this is a Pi feature. Use it when multiple providers offer the same model ID.
 - `thinking` uses the same values as Pi's `--thinking` flag.
 - `tools` only controls built-in tools. Extension tools remain available unless extensions are disabled.
 - The Markdown body below the frontmatter becomes the agent's system prompt and is **appended** to Pi's default system prompt (it does **not** replace it).
