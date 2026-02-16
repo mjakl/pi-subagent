@@ -35,6 +35,37 @@ npm install
 
 ## Configuration
 
+### Delegation Depth (Nested Subagents)
+
+By default, this extension allows only one delegation hop:
+
+- Main agent runs at depth `0` and can call `subagent`
+- Child subagents run at depth `1` and **cannot** call `subagent` again
+
+This prevents accidental recursive spawning by default.
+
+You can override the limit with either:
+
+- CLI flag: `--subagent-max-depth <n>`
+- Environment variable: `PI_SUBAGENT_MAX_DEPTH=<n>`
+
+`n` must be a non-negative integer.
+
+`PI_SUBAGENT_DEPTH` is managed internally and propagated automatically to child subagent processes.
+
+Examples:
+
+```bash
+# Default behavior (equivalent): max depth 1
+pi
+
+# Allow one nested level (main -> child -> grandchild)
+pi --subagent-max-depth 2
+
+# Disable subagent delegation entirely
+pi --subagent-max-depth 0
+```
+
 ### Subagent Definitions
 
 Subagents are defined as Markdown files with YAML frontmatter.
@@ -53,6 +84,7 @@ description: Expert technical writer and editor
 model: anthropic/claude-3-5-sonnet
 tools: read, write
 ---
+
 You are an expert technical writer. Your task is to improve the clarity and conciseness of the provided text.
 ```
 
@@ -60,15 +92,16 @@ Note: this repository includes a sample agent in `agents/oracle.md` for referenc
 
 ### Frontmatter Fields
 
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `name` | Yes | — | Agent identifier used in tool calls (must match exactly) |
-| `description` | Yes | — | What the agent does (shown to the main agent) |
-| `model` | No | Uses the default pi model | Overrides the model for this agent. You can include a provider prefix (e.g. `anthropic/claude-3-5-sonnet` or `openrouter/claude-3.5-sonnet`) to force a specific provider. |
-| `thinking` | No | Uses Pi's default thinking level | Sets the thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`). Equivalent to `--thinking`. |
-| `tools` | No | `read,bash,edit,write` | Comma-separated list of **built-in** tools to enable for this agent. If omitted, defaults apply. |
+| Field         | Required | Default                          | Description                                                                                                                                                                |
+| ------------- | -------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`        | Yes      | —                                | Agent identifier used in tool calls (must match exactly)                                                                                                                   |
+| `description` | Yes      | —                                | What the agent does (shown to the main agent)                                                                                                                              |
+| `model`       | No       | Uses the default pi model        | Overrides the model for this agent. You can include a provider prefix (e.g. `anthropic/claude-3-5-sonnet` or `openrouter/claude-3.5-sonnet`) to force a specific provider. |
+| `thinking`    | No       | Uses Pi's default thinking level | Sets the thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`). Equivalent to `--thinking`.                                                                  |
+| `tools`       | No       | `read,bash,edit,write`           | Comma-separated list of **built-in** tools to enable for this agent. If omitted, defaults apply.                                                                           |
 
 Notes:
+
 - `model` accepts `provider/model` syntax — this is a Pi feature. Use it when multiple providers offer the same model ID.
 - `thinking` uses the same values as Pi's `--thinking` flag; it's recommended to set it explicitly since thinking support varies by model.
 - `tools` only controls built-in tools. Extension tools remain available unless extensions are disabled.
@@ -84,13 +117,13 @@ Notes:
 
 Available Tools (default: `read`, `bash`, `edit`, `write`):
 
-- `read`  — Read file contents
-- `bash`  — Execute bash commands
-- `edit`  — Edit files with find/replace
+- `read` — Read file contents
+- `bash` — Execute bash commands
+- `edit` — Edit files with find/replace
 - `write` — Write files (creates/overwrites)
-- `grep`  — Search file contents (read-only, off by default)
-- `find`  — Find files by glob pattern (read-only, off by default)
-- `ls`    — List directory contents (read-only, off by default)
+- `grep` — Search file contents (read-only, off by default)
+- `find` — Find files by glob pattern (read-only, off by default)
+- `ls` — List directory contents (read-only, off by default)
 
 Tip: for a read-only tool selection, use `read,find,ls,grep`. As soon as you include `edit`, `write`, or `bash`, the agent can practically go wild.
 
@@ -99,6 +132,7 @@ Tip: for a read-only tool selection, use `read,find,ls,grep`. As soon as you inc
 ### The Isolation Model
 
 Each subagent runs as a **completely isolated process**:
+
 - ❌ Cannot see the main agent's conversation history
 - ❌ Cannot see other subagents' work
 - ❌ Cannot access shared memory or state
@@ -119,19 +153,20 @@ Nothing else. No file contents, no conversation history, no prior context. **You
 
 ### What Comes Back to the Main Agent
 
-| Data | Main Agent Sees | TUI Shows |
-|------|-----------------|-----------|
-| Final text output | ✅ Yes — full, unbounded | ✅ Yes |
-| Tool calls made by subagent | ❌ No | ✅ Yes (expanded view) |
-| Token usage / cost | ❌ No | ✅ Yes |
-| Reasoning/thinking steps | ❌ No | ❌ No |
-| Error messages | ✅ Yes (on failure) | ✅ Yes |
+| Data                        | Main Agent Sees          | TUI Shows              |
+| --------------------------- | ------------------------ | ---------------------- |
+| Final text output           | ✅ Yes — full, unbounded | ✅ Yes                 |
+| Tool calls made by subagent | ❌ No                    | ✅ Yes (expanded view) |
+| Token usage / cost          | ❌ No                    | ✅ Yes                 |
+| Reasoning/thinking steps    | ❌ No                    | ❌ No                  |
+| Error messages              | ✅ Yes (on failure)      | ✅ Yes                 |
 
 **Key point:** The main agent receives **only the final assistant text** from each subagent. Not the tool calls, not the reasoning, not the intermediate steps. This prevents context pollution while still giving you the results.
 
 ### Parallel Mode Behavior
 
 When running multiple agents in parallel:
+
 - All subagents start simultaneously (up to 4 concurrent)
 - Each runs in complete isolation
 - Main agent receives a combined result after all finish:
@@ -147,6 +182,7 @@ Parallel: 3/3 succeeded
 ## Features
 
 - **Auto-Discovery** — Agents are found at startup and their descriptions are injected into the main agent's system prompt.
+- **Depth Guard** — Delegation depth is limited by default to prevent recursive subagent spawning.
 - **Streaming Updates** — Watch subagent progress in real-time as tool calls and outputs stream in.
 - **Rich TUI Rendering** — Collapsed/expanded views with usage stats, tool call previews, and markdown output.
 - **Security Confirmation** — Project-local agents require explicit user approval before execution.
