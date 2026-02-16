@@ -16,8 +16,8 @@ import {
 	isResultError,
 } from "./types.js";
 
-const COLLAPSED_ITEM_COUNT = 10;
-const COLLAPSED_PARALLEL_ITEM_COUNT = 5;
+const COLLAPSED_LINE_COUNT = 10;
+const COLLAPSED_PARALLEL_LINE_COUNT = 5;
 
 // ---------------------------------------------------------------------------
 // Formatting helpers
@@ -96,24 +96,44 @@ function formatToolCall(toolName: string, args: Record<string, unknown>, fg: The
 // Shared rendering building blocks
 // ---------------------------------------------------------------------------
 
+function splitOutputLines(text: string): string[] {
+	const lines = text.replace(/\r\n?/g, "\n").split("\n");
+	if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+	return lines;
+}
+
+function countDisplayLines(items: DisplayItem[]): number {
+	let count = 0;
+	for (const item of items) {
+		count += item.type === "text" ? splitOutputLines(item.text).length : 1;
+	}
+	return count;
+}
+
 function renderDisplayItems(
 	items: DisplayItem[],
 	expanded: boolean,
 	theme: { fg: ThemeFg },
 	limit?: number,
 ): string {
-	const toShow = limit ? items.slice(-limit) : items;
-	const skipped = limit && items.length > limit ? items.length - limit : 0;
-	let text = "";
-	if (skipped > 0) text += theme.fg("muted", `... ${skipped} earlier items\n`);
-	for (const item of toShow) {
+	const lines: string[] = [];
+	for (const item of items) {
 		if (item.type === "text") {
-			const preview = expanded ? item.text : item.text.split("\n").slice(0, 3).join("\n");
-			text += `${theme.fg("toolOutput", preview)}\n`;
+			for (const line of splitOutputLines(item.text)) {
+				lines.push(theme.fg("toolOutput", line));
+			}
 		} else {
-			text += `${theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme))}\n`;
+			lines.push(theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)));
 		}
 	}
+
+	const shouldTail = !expanded && typeof limit === "number";
+	const toShow = shouldTail ? lines.slice(-limit) : lines;
+	const skipped = shouldTail && lines.length > limit ? lines.length - limit : 0;
+
+	let text = "";
+	if (skipped > 0) text += theme.fg("muted", `... ${skipped} earlier lines\n`);
+	text += toShow.join("\n");
 	return text.trimEnd();
 }
 
@@ -255,8 +275,8 @@ function renderSingleCollapsed(
 	} else if (displayItems.length === 0) {
 		text += `\n${theme.fg("muted", "(no output)")}`;
 	} else {
-		text += `\n${renderDisplayItems(displayItems, false, theme, COLLAPSED_ITEM_COUNT)}`;
-		if (displayItems.length > COLLAPSED_ITEM_COUNT) {
+		text += `\n${renderDisplayItems(displayItems, false, theme, COLLAPSED_LINE_COUNT)}`;
+		if (countDisplayLines(displayItems) > COLLAPSED_LINE_COUNT) {
 			text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
 		}
 	}
@@ -358,7 +378,7 @@ function renderParallelCollapsed(
 		if (displayItems.length === 0) {
 			text += `\n${theme.fg("muted", r.exitCode === -1 ? "(running...)" : "(no output)")}`;
 		} else {
-			text += `\n${renderDisplayItems(displayItems, false, theme, COLLAPSED_PARALLEL_ITEM_COUNT)}`;
+			text += `\n${renderDisplayItems(displayItems, false, theme, COLLAPSED_PARALLEL_LINE_COUNT)}`;
 		}
 	}
 
