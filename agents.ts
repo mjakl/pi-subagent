@@ -57,20 +57,47 @@ function parseAgentFile(filePath: string, source: "user" | "project"): AgentConf
 	let content: string;
 	try { content = fs.readFileSync(filePath, "utf-8"); } catch { return null; }
 
-	const { frontmatter, body } = parseFrontmatter<Record<string, string>>(content);
-	if (!frontmatter.name || !frontmatter.description) return null;
+	let parsed: { frontmatter: Record<string, unknown>; body: string };
+	try {
+		parsed = parseFrontmatter<Record<string, unknown>>(content);
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		console.warn(`[pi-subagent] Skipping invalid agent file "${filePath}": ${message}`);
+		return null;
+	}
 
-	const tools = frontmatter.tools
-		?.split(",")
-		.map((t: string) => t.trim())
-		.filter(Boolean);
+	const frontmatter = parsed.frontmatter ?? {};
+	const body = parsed.body ?? "";
+
+	const name = typeof frontmatter.name === "string" ? frontmatter.name.trim() : "";
+	const description = typeof frontmatter.description === "string" ? frontmatter.description.trim() : "";
+	if (!name || !description) return null;
+
+	let tools: string[] | undefined;
+	if (typeof frontmatter.tools === "string") {
+		const parsedTools = frontmatter.tools
+			.split(",")
+			.map((t) => t.trim())
+			.filter(Boolean);
+		if (parsedTools.length > 0) tools = parsedTools;
+	} else if (Array.isArray(frontmatter.tools)) {
+		const parsedTools = frontmatter.tools
+			.filter((t): t is string => typeof t === "string")
+			.map((t) => t.trim())
+			.filter(Boolean);
+		if (parsedTools.length > 0) tools = parsedTools;
+	} else if (frontmatter.tools !== undefined) {
+		console.warn(
+			`[pi-subagent] Ignoring invalid tools field in "${filePath}". Expected a comma-separated string or string array.`,
+		);
+	}
 
 	return {
-		name: frontmatter.name,
-		description: frontmatter.description,
-		tools: tools && tools.length > 0 ? tools : undefined,
-		model: frontmatter.model,
-		thinking: frontmatter.thinking,
+		name,
+		description,
+		tools,
+		model: typeof frontmatter.model === "string" ? frontmatter.model : undefined,
+		thinking: typeof frontmatter.thinking === "string" ? frontmatter.thinking : undefined,
 		systemPrompt: body,
 		source,
 		filePath,

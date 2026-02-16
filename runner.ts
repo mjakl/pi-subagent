@@ -208,7 +208,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
 		});
 
 		result.exitCode = exitCode;
-		if (wasAborted) throw new Error("Subagent was aborted");
+		if (wasAborted) {
+			result.exitCode = 130;
+			result.stopReason = "aborted";
+			result.errorMessage = "Subagent was aborted.";
+			if (!result.stderr.trim()) result.stderr = "Subagent was aborted.";
+		}
 		return result;
 	} finally {
 		cleanupTempFile(tmpPath, tmpDir);

@@ -57,20 +57,22 @@ function formatAgentNames(agents: AgentConfig[]): string {
 	return agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
 }
 
+/** Get project-local agents referenced by the current request. */
+function getRequestedProjectAgents(agents: AgentConfig[], requestedNames: Set<string>): AgentConfig[] {
+	return Array.from(requestedNames)
+		.map((name) => agents.find((a) => a.name === name))
+		.filter((a): a is AgentConfig => a?.source === "project");
+}
+
 /**
  * Prompt the user to confirm project-local agents if needed.
  * Returns false if the user declines.
  */
 async function confirmProjectAgentsIfNeeded(
-	agents: AgentConfig[],
-	requestedNames: Set<string>,
+	projectAgents: AgentConfig[],
 	projectAgentsDir: string | null,
-	ctx: { hasUI: boolean; ui: { confirm: (title: string, body: string) => Promise<boolean> } },
+	ctx: { ui: { confirm: (title: string, body: string) => Promise<boolean> } },
 ): Promise<boolean> {
-	const projectAgents = Array.from(requestedNames)
-		.map((name) => agents.find((a) => a.name === name))
-		.filter((a): a is AgentConfig => a?.source === "project");
-
 	if (projectAgents.length === 0) return true;
 
 	const names = projectAgents.map((a) => a.name).join(", ");
@@ -166,17 +168,32 @@ Use single mode for one task, parallel mode when tasks are independent and can r
 				};
 			}
 
-			// Security: confirm project-local agents before running
-			if ((params.confirmProjectAgents ?? true) && ctx.hasUI) {
-				const requested = new Set<string>();
-				if (params.tasks) for (const t of params.tasks) requested.add(t.agent);
-				if (params.agent) requested.add(params.agent);
+			// Security: guard project-local agents before running
+			const requested = new Set<string>();
+			if (params.tasks) for (const t of params.tasks) requested.add(t.agent);
+			if (params.agent) requested.add(params.agent);
 
-				const approved = await confirmProjectAgentsIfNeeded(agents, requested, discovery.projectAgentsDir, ctx);
-				if (!approved) {
+			const requestedProjectAgents = getRequestedProjectAgents(agents, requested);
+			const shouldConfirmProjectAgents = params.confirmProjectAgents ?? true;
+			if (requestedProjectAgents.length > 0 && shouldConfirmProjectAgents) {
+				if (ctx.hasUI) {
+					const approved = await confirmProjectAgentsIfNeeded(requestedProjectAgents, discovery.projectAgentsDir, ctx);
+					if (!approved) {
+						return {
+							content: [{ type: "text", text: "Canceled: project-local agents not approved." }],
+							details: makeDetails(hasTasks ? "parallel" : "single")([]),
+						};
+					}
+				} else {
+					const names = requestedProjectAgents.map((a) => a.name).join(", ");
+					const dir = discovery.projectAgentsDir ?? "(unknown)";
 					return {
-						content: [{ type: "text", text: "Canceled: project-local agents not approved." }],
+						content: [{
+							type: "text",
+							text: `Blocked: project-local agent confirmation is required in non-UI mode.\nAgents: ${names}\nSource: ${dir}\n\nRe-run with confirmProjectAgents: false only if this repository is trusted.`,
+						}],
 						details: makeDetails(hasTasks ? "parallel" : "single")([]),
+						isError: true,
 					};
 				}
 			}
