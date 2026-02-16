@@ -16,13 +16,19 @@ There are many subagent extensions for pi, this one is mine.
 
 ## Install
 
-### Option 1: Install via Pi
+### Option 1: Install from npm (recommended)
+
+```bash
+pi install npm:@mjakl/pi-subagent
+```
+
+### Option 2: Install via git
 
 ```bash
 pi install git:github.com/mjakl/pi-subagent
 ```
 
-### Option 2: Manual Installation
+### Option 3: Manual Installation
 
 Clone this repository to your Pi extensions directory:
 
