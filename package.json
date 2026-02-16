@@ -1,6 +1,6 @@
 {
   "name": "@mjakl/pi-subagent",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Subagent extension for Pi coding agent. Delegate tasks to specialized agents.",
   "type": "module",
   "main": "index.ts",
