@@ -4,6 +4,16 @@
   "description": "Subagent extension for Pi coding agent. Delegate tasks to specialized agents.",
   "type": "module",
   "main": "index.ts",
+  "files": [
+    "index.ts",
+    "agents.ts",
+    "runner.ts",
+    "render.ts",
+    "types.ts",
+    "agents/*.md",
+    "README.md",
+    "LICENSE"
+  ],
   "pi": {
     "extensions": [
       "./index.ts"
