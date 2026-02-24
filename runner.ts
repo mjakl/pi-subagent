@@ -4,7 +4,7 @@
  * Spawns isolated `pi` processes and streams results back via callbacks.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, exec } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -18,9 +18,34 @@ import {
   getFinalOutput,
 } from "./types.js";
 
+const isWindows = process.platform === "win32";
 const SIGKILL_TIMEOUT_MS = 5000;
 const SUBAGENT_DEPTH_ENV = "PI_SUBAGENT_DEPTH";
 const SUBAGENT_MAX_DEPTH_ENV = "PI_SUBAGENT_MAX_DEPTH";
+
+// ---------------------------------------------------------------------------
+// Resolve the command needed to spawn a new `pi` process
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the spawn command from the current process context so that we
+ * can always use `shell: false`.
+ *
+ * On Windows, npm installs `pi` as a `.cmd` batch wrapper.  Spawning
+ * through `cmd.exe` (shell: true) introduces argument-quoting problems
+ * and unreliable signal / EOF propagation.  Instead we read the `node`
+ * binary path and the CLI entry-script path straight from the running
+ * process, which bypasses `.cmd` wrappers entirely.
+ */
+function resolvePiSpawn(): { command: string; prefixArgs: string[] } {
+  const isNode = /[\\/]node(?:\.exe)?$/i.test(process.execPath);
+  if (isNode && process.argv[1]) {
+    // Standard npm install: node /path/to/cli.js <args>
+    return { command: process.execPath, prefixArgs: [process.argv[1]] };
+  }
+  // Standalone / packaged binary
+  return { command: process.execPath, prefixArgs: [] };
+}
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
@@ -216,16 +241,25 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
     const exitCode = await new Promise<number>((resolve) => {
       const nextDepth = Math.max(0, Math.floor(parentDepth)) + 1;
       const propagatedMaxDepth = Math.max(0, Math.floor(maxDepth));
-      const proc = spawn("pi", piArgs, {
+      // Derive the node binary + CLI script from the running process so
+      // we can spawn with shell: false on every platform, avoiding the
+      // cmd.exe wrapper on Windows entirely.
+      const { command, prefixArgs } = resolvePiSpawn();
+
+      const proc = spawn(command, [...prefixArgs, ...piArgs], {
         cwd: taskCwd ?? cwd,
         shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["pipe", "pipe", "pipe"],
         env: {
           ...process.env,
           [SUBAGENT_DEPTH_ENV]: String(nextDepth),
           [SUBAGENT_MAX_DEPTH_ENV]: String(propagatedMaxDepth),
         },
       });
+
+      // Close stdin immediately so pi receives EOF and runs in
+      // non-interactive / one-shot mode.
+      proc.stdin.end();
 
       let buffer = "";
 
@@ -235,7 +269,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
 
       proc.stdout.on("data", (chunk: Buffer) => {
         buffer += chunk.toString();
-        const lines = buffer.split("\n");
+        const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() || "";
         for (const line of lines) flushLine(line);
       });
@@ -255,10 +289,19 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
       if (signal) {
         const kill = () => {
           wasAborted = true;
-          proc.kill("SIGTERM");
-          setTimeout(() => {
-            if (!proc.killed) proc.kill("SIGKILL");
-          }, SIGKILL_TIMEOUT_MS);
+          if (isWindows) {
+            // On Windows, POSIX signals are not supported and proc.kill()
+            // only terminates the immediate process, not its children.
+            // Use taskkill /T to tear down the entire process tree.
+            if (proc.pid !== undefined) {
+              exec(`taskkill /T /F /PID ${proc.pid}`, () => {});
+            }
+          } else {
+            proc.kill("SIGTERM");
+            setTimeout(() => {
+              if (!proc.killed) proc.kill("SIGKILL");
+            }, SIGKILL_TIMEOUT_MS);
+          }
         };
         if (signal.aborted) kill();
         else signal.addEventListener("abort", kill, { once: true });
