@@ -78,7 +78,7 @@ const SubagentParams = Type.Object({
   mode: Type.Optional(
     Type.String({
       description:
-        "Context mode for delegated runs: 'spawn' (default) gives only the task prompt; 'fork' adds a forked snapshot of current session context.",
+        "Context mode for delegated runs. 'spawn' (default) sends only the task prompt (best for isolated, reproducible runs with lower token/cost and less context leakage). 'fork' adds a snapshot of current session context plus task prompt (best for follow-up work, but usually higher token/cost and may include sensitive context).",
       default: DEFAULT_DELEGATION_MODE,
     }),
   ),
@@ -302,8 +302,8 @@ ${agentList}
 Each subagent runs in an **isolated process**.
 
 Context behavior is controlled by optional 'mode':
-- 'spawn' (default): child receives only the provided task prompt.
-- 'fork': child receives a forked snapshot of current session context plus the task prompt.
+- 'spawn' (default): child receives only the provided task prompt. Best for isolated, reproducible tasks with lower token/cost and less context leakage.
+- 'fork': child receives a forked snapshot of current session context plus the task prompt. Best for follow-up tasks that rely on prior context; usually higher token/cost and may include sensitive context.
 
 **Single mode** — delegate one task:
 \`\`\`json
@@ -334,7 +334,9 @@ Use single mode for one task, parallel mode when tasks are independent and can r
         "",
         "Optional context mode switch:",
         "  mode: \"spawn\" (default) -> child gets only your task prompt.",
+        "                             Best for isolated/reproducible work; lower token/cost and less context leakage.",
         "  mode: \"fork\"            -> child gets current session context + your task prompt.",
+        "                             Best for follow-up work that depends on prior context; higher token/cost and may include sensitive context.",
         "",
         'Example single:   { agent: "writer", task: "Rewrite README.md", mode: "spawn" }',
         'Example parallel: { tasks: [{ agent: "writer", task: "..." }, { agent: "tester", task: "..." }], mode: "fork" }',

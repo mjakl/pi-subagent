@@ -76,8 +76,13 @@ pi --subagent-max-depth 0
 
 `subagent` supports a top-level `mode` switch:
 
-- `spawn` (default) — Child receives only the task string (`Task: ...`).
-- `fork` — Child receives a forked snapshot of the current session context **plus** the task string.
+- `spawn` (default) — Child receives only the task string (`Task: ...`). Best for isolated, reproducible work; typically lower token/cost and less context leakage.
+- `fork` — Child receives a forked snapshot of the current session context **plus** the task string. Best for follow-up work that depends on prior context; typically higher token/cost and may include sensitive context.
+
+Quick rule of thumb:
+
+- Start with `spawn` for one-off tasks.
+- Use `fork` when the delegated task depends on the current session's prior discussion, reads, or decisions.
 
 Examples:
 
