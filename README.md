@@ -1,6 +1,6 @@
 # Pi Subagent
 
-**Delegate tasks to specialized subagents with isolated context windows.**
+**Delegate tasks to specialized subagents with configurable context modes (`spawn` / `fork`).**
 
 There are many subagent extensions for pi, this one is mine.
 
@@ -8,7 +8,7 @@ There are many subagent extensions for pi, this one is mine.
 
 **Specialization** — Use tailored agents for specific tasks like refactoring, documentation, or research.
 
-**Isolated Context** — Each subagent runs in its own process with its own context, preventing the main agent's context from becoming cluttered.
+**Context Control** — Choose `spawn` (fresh context) or `fork` (inherit current session context), depending on the task.
 
 **Parallel Execution** — Run multiple agents at once.
 
@@ -71,6 +71,25 @@ pi --subagent-max-depth 2
 # Disable subagent delegation entirely
 pi --subagent-max-depth 0
 ```
+
+### Context Mode (`spawn` vs `fork`)
+
+`subagent` supports a top-level `mode` switch:
+
+- `spawn` (default) — Child receives only the task string (`Task: ...`).
+- `fork` — Child receives a forked snapshot of the current session context **plus** the task string.
+
+Examples:
+
+```json
+{ "agent": "writer", "task": "Document the API", "mode": "spawn" }
+```
+
+```json
+{ "agent": "review", "task": "Double-check this migration", "mode": "fork" }
+```
+
+If omitted, mode defaults to `spawn`.
 
 ### Subagent Definitions
 
@@ -137,17 +156,25 @@ Tip: for a read-only tool selection, use `read,find,ls,grep`. As soon as you inc
 
 ### The Isolation Model
 
-Each subagent runs as a **completely isolated process**:
+Each subagent always runs in a **separate `pi` process**:
 
-- ❌ Cannot see the main agent's conversation history
-- ❌ Cannot see other subagents' work
-- ❌ Cannot access shared memory or state
-- ✅ Receives only: its system prompt (from the .md file) + your task string
-- ✅ Has its own fresh context window
+- ❌ No shared memory/state with the parent process
+- ❌ No visibility into sibling subagents
+- ✅ Its own model/tool/runtime loop
+
+What it can see depends on `mode`:
+
+- `spawn` (default)
+  - ✅ Receives: subagent system prompt + `Task: ...`
+  - ❌ Does **not** receive parent session history
+- `fork`
+  - ✅ Receives: forked snapshot of current parent session context + `Task: ...`
 
 ### What Gets Sent to Subagents
 
-When you call `subagent({ agent: "writer", task: "Document the API" })`, the subagent receives:
+#### `spawn` mode (default)
+
+`subagent({ agent: "writer", task: "Document the API" })` sends:
 
 ```
 [System Prompt from ~/.pi/agent/agents/writer.md]
@@ -155,7 +182,20 @@ When you call `subagent({ agent: "writer", task: "Document the API" })`, the sub
 User: Task: Document the API
 ```
 
-Nothing else. No file contents, no conversation history, no prior context. **You must include all necessary context in the task string itself** (file paths, requirements, code snippets).
+No parent conversation history is included. In `spawn`, include all required context in `task`.
+
+#### `fork` mode
+
+`subagent({ agent: "writer", task: "Document the API", mode: "fork" })` sends:
+
+```
+[Forked snapshot of current session context]
+[System Prompt from ~/.pi/agent/agents/writer.md]
+
+User: Task: Document the API
+```
+
+Note: `fork` copies session context, not transient runtime-only prompt mutations from the parent process.
 
 ### What Comes Back to the Main Agent
 
@@ -174,7 +214,7 @@ Nothing else. No file contents, no conversation history, no prior context. **You
 When running multiple agents in parallel:
 
 - All subagents start simultaneously (up to 4 concurrent)
-- Each runs in complete isolation
+- The top-level `mode` applies to all tasks in that call
 - Main agent receives a combined result after all finish:
 
 ```
@@ -188,6 +228,7 @@ Parallel: 3/3 succeeded
 ## Features
 
 - **Auto-Discovery** — Agents are found at startup and their descriptions are injected into the main agent's system prompt.
+- **Context Mode Switch** — `spawn` (fresh context) and `fork` (session snapshot + task) per call.
 - **Depth Guard** — Delegation depth is limited by default to prevent recursive subagent spawning.
 - **Streaming Updates** — Watch subagent progress in real-time as tool calls and outputs stream in.
 - **Rich TUI Rendering** — Collapsed/expanded views with usage stats, tool call previews, and markdown output.
@@ -198,7 +239,7 @@ Parallel: 3/3 succeeded
 ```
 index.ts    — Extension entry point: lifecycle hooks, tool registration, mode orchestration
 agents.ts   — Agent discovery: reads and parses .md files from user/project directories
-runner.ts   — Process runner: spawns `pi` subprocesses and streams JSON events
+runner.ts   — Process runner: starts `pi` subprocesses in spawn/fork context modes and streams JSON events
 render.ts   — TUI rendering: renderCall and renderResult for the subagent tool
 types.ts    — Shared types and pure helper functions
 ```

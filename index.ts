@@ -2,11 +2,15 @@
  * Pi Subagent Extension
  *
  * Delegates tasks to specialized subagents, each running as an isolated `pi`
- * process with its own context window.
+ * process.
  *
- * Supports two modes:
+ * Supports two invocation shapes:
  *   - Single:   { agent: "name", task: "..." }
  *   - Parallel: { tasks: [{ agent: "name", task: "..." }, ...] }
+ *
+ * And two context modes:
+ *   - spawn (default): child gets only the task prompt.
+ *   - fork: child gets a forked snapshot of current session context + task prompt.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -15,8 +19,10 @@ import { type AgentConfig, discoverAgents } from "./agents.js";
 import { renderCall, renderResult } from "./render.js";
 import { mapConcurrent, runAgent } from "./runner.js";
 import {
+  type DelegationMode,
   type SingleResult,
   type SubagentDetails,
+  DEFAULT_DELEGATION_MODE,
   emptyUsage,
   getFinalOutput,
   isResultError,
@@ -43,7 +49,7 @@ const TaskItem = Type.Object({
   }),
   task: Type.String({
     description:
-      "Self-contained task description with all necessary context. The subagent cannot see your conversation.",
+      "Task description for this delegated run. In spawn mode include all required context; in fork mode the subagent also sees your current session context.",
   }),
   cwd: Type.Optional(
     Type.String({ description: "Working directory for this agent's process" }),
@@ -60,13 +66,20 @@ const SubagentParams = Type.Object({
   task: Type.Optional(
     Type.String({
       description:
-        "Task description for single mode. Must be self-contained — the subagent has no access to your conversation history.",
+        "Task description for single mode. In spawn mode it must be self-contained; in fork mode the subagent also receives your current session context.",
     }),
   ),
   tasks: Type.Optional(
     Type.Array(TaskItem, {
       description:
         "For parallel mode: array of {agent, task} objects. Each task runs in an isolated process concurrently. Do NOT set agent/task when using this.",
+    }),
+  ),
+  mode: Type.Optional(
+    Type.String({
+      description:
+        "Context mode for delegated runs: 'spawn' (default) gives only the task prompt; 'fork' adds a forked snapshot of current session context.",
+      default: DEFAULT_DELEGATION_MODE,
     }),
   ),
   confirmProjectAgents: Type.Optional(
@@ -91,6 +104,33 @@ interface DelegationDepthConfig {
   currentDepth: number;
   maxDepth: number;
   canDelegate: boolean;
+}
+
+interface SessionSnapshotSource {
+  getHeader: () => unknown;
+  getBranch: () => unknown[];
+}
+
+function parseDelegationMode(raw: unknown): DelegationMode | null {
+  if (raw === undefined) return DEFAULT_DELEGATION_MODE;
+  if (typeof raw !== "string") return null;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "spawn" || normalized === "fork") {
+    return normalized;
+  }
+  return null;
+}
+
+function buildForkSessionSnapshotJsonl(
+  sessionManager: SessionSnapshotSource,
+): string | null {
+  const header = sessionManager.getHeader();
+  if (!header || typeof header !== "object") return null;
+
+  const branchEntries = sessionManager.getBranch();
+  const lines = [JSON.stringify(header)];
+  for (const entry of branchEntries) lines.push(JSON.stringify(entry));
+  return `${lines.join("\n")}\n`;
 }
 
 function parseNonNegativeInt(raw: unknown): number | null {
@@ -161,10 +201,14 @@ function resolveDelegationDepthConfig(pi: ExtensionAPI): DelegationDepthConfig {
   return { currentDepth, maxDepth, canDelegate: currentDepth < maxDepth };
 }
 
-function makeDetailsFactory(projectAgentsDir: string | null) {
+function makeDetailsFactory(
+  projectAgentsDir: string | null,
+  delegationMode: DelegationMode,
+) {
   return (mode: "single" | "parallel") =>
     (results: SingleResult[]): SubagentDetails => ({
       mode,
+      delegationMode,
       projectAgentsDir,
       results,
     });
@@ -255,16 +299,20 @@ ${agentList}
 
 ### How to call the subagent tool
 
-Each subagent runs in an **isolated process** with no access to your conversation. Task descriptions must be **self-contained** with all necessary context (file paths, requirements, constraints).
+Each subagent runs in an **isolated process**.
+
+Context behavior is controlled by optional 'mode':
+- 'spawn' (default): child receives only the provided task prompt.
+- 'fork': child receives a forked snapshot of current session context plus the task prompt.
 
 **Single mode** — delegate one task:
 \`\`\`json
-{ "agent": "agent-name", "task": "Detailed, self-contained task description..." }
+{ "agent": "agent-name", "task": "Detailed task...", "mode": "spawn" }
 \`\`\`
 
 **Parallel mode** — run multiple tasks concurrently (do NOT also set agent/task):
 \`\`\`json
-{ "tasks": [{ "agent": "agent-name", "task": "..." }, { "agent": "other-agent", "task": "..." }] }
+{ "tasks": [{ "agent": "agent-name", "task": "..." }, { "agent": "other-agent", "task": "..." }], "mode": "fork" }
 \`\`\`
 
 Use single mode for one task, parallel mode when tasks are independent and can run simultaneously.
@@ -278,26 +326,68 @@ Use single mode for one task, parallel mode when tasks are independent and can r
       name: "subagent",
       label: "Subagent",
       description: [
-        "Delegate a task to a specialized subagent running in its own isolated pi process.",
+        "Delegate work to specialized subagents running in isolated pi processes.",
         "",
-        "IMPORTANT: Use exactly ONE of these two modes:",
+        "IMPORTANT: Use exactly ONE invocation shape:",
         "  Single mode:   set `agent` and `task` (both required together).",
         "  Parallel mode: set `tasks` array (do NOT also set `agent`/`task`).",
         "",
-        "Each subagent runs with a fresh context — it cannot see your conversation.",
-        "Write task descriptions that are fully self-contained with all needed context.",
+        "Optional context mode switch:",
+        "  mode: \"spawn\" (default) -> child gets only your task prompt.",
+        "  mode: \"fork\"            -> child gets current session context + your task prompt.",
         "",
-        'Example single:   { agent: "writer", task: "Rewrite README.md to be concise" }',
-        'Example parallel: { tasks: [{ agent: "writer", task: "..." }, { agent: "tester", task: "..." }] }',
+        'Example single:   { agent: "writer", task: "Rewrite README.md", mode: "spawn" }',
+        'Example parallel: { tasks: [{ agent: "writer", task: "..." }, { agent: "tester", task: "..." }], mode: "fork" }',
       ].join("\n"),
       parameters: SubagentParams,
 
       async execute(_toolCallId, params, signal, onUpdate, ctx) {
         const discovery = discoverAgents(ctx.cwd, "both");
         const { agents } = discovery;
-        const makeDetails = makeDetailsFactory(discovery.projectAgentsDir);
 
-        // Validate: exactly one mode must be specified
+        const delegationMode = parseDelegationMode(params.mode);
+        if (!delegationMode) {
+          const fallbackDetails = makeDetailsFactory(
+            discovery.projectAgentsDir,
+            DEFAULT_DELEGATION_MODE,
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Invalid mode \"${String(params.mode)}\". Expected \"spawn\" or \"fork\".\nAvailable agents: ${formatAgentNames(agents)}`,
+              },
+            ],
+            details: fallbackDetails("single")([]),
+            isError: true,
+          };
+        }
+
+        const makeDetails = makeDetailsFactory(
+          discovery.projectAgentsDir,
+          delegationMode,
+        );
+
+        let forkSessionSnapshotJsonl: string | undefined;
+        if (delegationMode === "fork") {
+          forkSessionSnapshotJsonl = buildForkSessionSnapshotJsonl(
+            ctx.sessionManager,
+          );
+          if (!forkSessionSnapshotJsonl) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Cannot use mode=\"fork\": failed to snapshot current session context.",
+                },
+              ],
+              details: makeDetails("single")([]),
+              isError: true,
+            };
+          }
+        }
+
+        // Validate: exactly one invocation shape must be specified
         const hasTasks = (params.tasks?.length ?? 0) > 0;
         const hasSingle = Boolean(params.agent && params.task);
         if (Number(hasTasks) + Number(hasSingle) !== 1) {
@@ -305,7 +395,7 @@ Use single mode for one task, parallel mode when tasks are independent and can r
             content: [
               {
                 type: "text",
-                text: `Invalid parameters. Provide exactly one mode.\nAvailable agents: ${formatAgentNames(agents)}`,
+                text: `Invalid parameters. Provide exactly one invocation shape.\nAvailable agents: ${formatAgentNames(agents)}`,
               },
             ],
             details: makeDetails("single")([]),
@@ -360,6 +450,8 @@ Use single mode for one task, parallel mode when tasks are independent and can r
         if (params.tasks && params.tasks.length > 0) {
           return executeParallel(
             params.tasks,
+            delegationMode,
+            forkSessionSnapshotJsonl,
             agents,
             ctx.cwd,
             signal,
@@ -374,6 +466,8 @@ Use single mode for one task, parallel mode when tasks are independent and can r
             params.agent,
             params.task,
             params.cwd,
+            delegationMode,
+            forkSessionSnapshotJsonl,
             agents,
             ctx.cwd,
             signal,
@@ -407,6 +501,8 @@ Use single mode for one task, parallel mode when tasks are independent and can r
     agentName: string,
     task: string,
     cwd: string | undefined,
+    delegationMode: DelegationMode,
+    forkSessionSnapshotJsonl: string | undefined,
     agents: AgentConfig[],
     defaultCwd: string,
     signal: AbortSignal | undefined,
@@ -419,6 +515,8 @@ Use single mode for one task, parallel mode when tasks are independent and can r
       agentName,
       task,
       taskCwd: cwd,
+      delegationMode,
+      forkSessionSnapshotJsonl,
       parentDepth: currentDepth,
       maxDepth,
       signal,
@@ -456,6 +554,8 @@ Use single mode for one task, parallel mode when tasks are independent and can r
 
   async function executeParallel(
     tasks: Array<{ agent: string; task: string; cwd?: string }>,
+    delegationMode: DelegationMode,
+    forkSessionSnapshotJsonl: string | undefined,
     agents: AgentConfig[],
     defaultCwd: string,
     signal: AbortSignal | undefined,
@@ -520,6 +620,8 @@ Use single mode for one task, parallel mode when tasks are independent and can r
             agentName: t.agent,
             task: t.task,
             taskCwd: t.cwd,
+            delegationMode,
+            forkSessionSnapshotJsonl,
             parentDepth: currentDepth,
             maxDepth,
             signal,

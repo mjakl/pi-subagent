@@ -12,6 +12,7 @@ import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { Message } from "@mariozechner/pi-ai";
 import type { AgentConfig } from "./agents.js";
 import {
+  type DelegationMode,
   type SingleResult,
   type SubagentDetails,
   emptyUsage,
@@ -39,19 +40,24 @@ function writePromptToTempFile(
   return { dir: tmpDir, filePath };
 }
 
-function cleanupTempFile(filePath: string | null, dir: string | null): void {
-  if (filePath)
-    try {
-      fs.unlinkSync(filePath);
-    } catch {
-      /* ignore */
-    }
-  if (dir)
-    try {
-      fs.rmdirSync(dir);
-    } catch {
-      /* ignore */
-    }
+function writeForkSessionToTempFile(
+  agentName: string,
+  sessionJsonl: string,
+): { dir: string; filePath: string } {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
+  const safeName = agentName.replace(/[^\w.-]+/g, "_");
+  const filePath = path.join(tmpDir, `fork-${safeName}.jsonl`);
+  fs.writeFileSync(filePath, sessionJsonl, { encoding: "utf-8", mode: 0o600 });
+  return { dir: tmpDir, filePath };
+}
+
+function cleanupTempDir(dir: string | null): void {
+  if (!dir) return;
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -106,8 +112,17 @@ function buildPiArgs(
   agent: AgentConfig,
   systemPromptPath: string | null,
   task: string,
+  delegationMode: DelegationMode,
+  forkSessionPath: string | null,
 ): string[] {
-  const args: string[] = ["--mode", "json", "-p", "--no-session"];
+  const args: string[] = ["--mode", "json", "-p"];
+
+  if (delegationMode === "spawn") {
+    args.push("--no-session");
+  } else if (forkSessionPath) {
+    args.push("--session", forkSessionPath);
+  }
+
   if (agent.model) args.push("--model", agent.model);
   if (agent.thinking) args.push("--thinking", agent.thinking);
   if (agent.tools && agent.tools.length > 0)
@@ -132,6 +147,10 @@ export interface RunAgentOptions {
   task: string;
   /** Optional override working directory. */
   taskCwd?: string;
+  /** Context mode: spawn (fresh) or fork (session snapshot + task). */
+  delegationMode: DelegationMode;
+  /** Serialized parent session snapshot used when delegationMode is "fork". */
+  forkSessionSnapshotJsonl?: string;
   /** Current delegation depth of the caller process. */
   parentDepth: number;
   /** Maximum allowed delegation depth to propagate to child processes. */
@@ -156,6 +175,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
     agentName,
     task,
     taskCwd,
+    delegationMode,
+    forkSessionSnapshotJsonl,
     parentDepth,
     maxDepth,
     signal,
@@ -174,6 +195,26 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
       messages: [],
       stderr: `Unknown agent: "${agentName}". Available agents: ${available}.`,
       usage: emptyUsage(),
+    };
+  }
+
+  if (
+    delegationMode === "fork" &&
+    (!forkSessionSnapshotJsonl || !forkSessionSnapshotJsonl.trim())
+  ) {
+    return {
+      agent: agentName,
+      agentSource: agent.source,
+      task,
+      exitCode: 1,
+      messages: [],
+      stderr:
+        "Cannot run in fork mode: missing parent session snapshot context.",
+      usage: emptyUsage(),
+      model: agent.model,
+      stopReason: "error",
+      errorMessage:
+        "Cannot run in fork mode: missing parent session snapshot context.",
     };
   }
 
@@ -201,16 +242,31 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
   };
 
   // Write system prompt to temp file if needed
-  let tmpDir: string | null = null;
-  let tmpPath: string | null = null;
+  let promptTmpDir: string | null = null;
+  let promptTmpPath: string | null = null;
   if (agent.systemPrompt.trim()) {
     const tmp = writePromptToTempFile(agent.name, agent.systemPrompt);
-    tmpDir = tmp.dir;
-    tmpPath = tmp.filePath;
+    promptTmpDir = tmp.dir;
+    promptTmpPath = tmp.filePath;
+  }
+
+  // Write forked session snapshot if needed
+  let forkSessionTmpDir: string | null = null;
+  let forkSessionTmpPath: string | null = null;
+  if (delegationMode === "fork" && forkSessionSnapshotJsonl) {
+    const tmp = writeForkSessionToTempFile(agent.name, forkSessionSnapshotJsonl);
+    forkSessionTmpDir = tmp.dir;
+    forkSessionTmpPath = tmp.filePath;
   }
 
   try {
-    const piArgs = buildPiArgs(agent, tmpPath, task);
+    const piArgs = buildPiArgs(
+      agent,
+      promptTmpPath,
+      task,
+      delegationMode,
+      forkSessionTmpPath,
+    );
     let wasAborted = false;
 
     const exitCode = await new Promise<number>((resolve) => {
@@ -274,7 +330,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
     }
     return result;
   } finally {
-    cleanupTempFile(tmpPath, tmpDir);
+    cleanupTempDir(promptTmpDir);
+    cleanupTempDir(forkSessionTmpDir);
   }
 }
 

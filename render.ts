@@ -6,10 +6,12 @@ import * as os from "node:os";
 import { getMarkdownTheme } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
 import {
+	type DelegationMode,
 	type DisplayItem,
 	type SingleResult,
 	type SubagentDetails,
 	type UsageStats,
+	DEFAULT_DELEGATION_MODE,
 	aggregateUsage,
 	getDisplayItems,
 	getFinalOutput,
@@ -50,6 +52,10 @@ function truncate(text: string, maxLen: number): string {
 function shortenPath(p: string): string {
 	const home = os.homedir();
 	return p.startsWith(home) ? `~${p.slice(home.length)}` : p;
+}
+
+function normalizeDelegationMode(raw: unknown): DelegationMode {
+	return raw === "fork" ? "fork" : DEFAULT_DELEGATION_MODE;
 }
 
 type ThemeFg = (color: string, text: string) => string;
@@ -147,10 +153,14 @@ function statusIcon(r: SingleResult, theme: { fg: ThemeFg }): string {
 // ---------------------------------------------------------------------------
 
 export function renderCall(args: Record<string, any>, theme: { fg: ThemeFg; bold: (s: string) => string }): Text {
+	const delegationMode = normalizeDelegationMode(args.mode);
+	const modeBadge = theme.fg("muted", ` [${delegationMode}]`);
+
 	if (args.tasks && args.tasks.length > 0) {
 		let text =
 			theme.fg("toolTitle", theme.bold("subagent ")) +
-			theme.fg("accent", `parallel (${args.tasks.length} tasks)`);
+			theme.fg("accent", `parallel (${args.tasks.length} tasks)`) +
+			modeBadge;
 		for (const t of args.tasks.slice(0, 3)) {
 			text += `\n  ${theme.fg("accent", t.agent)}${theme.fg("dim", ` ${truncate(t.task, 40)}`)}`;
 		}
@@ -163,7 +173,8 @@ export function renderCall(args: Record<string, any>, theme: { fg: ThemeFg; bold
 	const preview = args.task ? truncate(args.task, 60) : "...";
 	let text =
 		theme.fg("toolTitle", theme.bold("subagent ")) +
-		theme.fg("accent", agentName);
+		theme.fg("accent", agentName) +
+		modeBadge;
 	text += `\n  ${theme.fg("dim", preview)}`;
 	return new Text(text, 0, 0);
 }
@@ -183,10 +194,13 @@ export function renderResult(
 		return new Text(first?.type === "text" && first.text ? first.text : "(no output)", 0, 0);
 	}
 
+	const delegationMode = normalizeDelegationMode(
+		(details as Partial<SubagentDetails>).delegationMode,
+	);
 	if (details.mode === "single") {
-		return renderSingleResult(details.results[0], expanded, theme);
+		return renderSingleResult(details.results[0], delegationMode, expanded, theme);
 	}
-	return renderParallelResult(details, expanded, theme);
+	return renderParallelResult(details, delegationMode, expanded, theme);
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +209,7 @@ export function renderResult(
 
 function renderSingleResult(
 	r: SingleResult,
+	delegationMode: DelegationMode,
 	expanded: boolean,
 	theme: { fg: ThemeFg; bold: (s: string) => string },
 ): Container | Text {
@@ -204,13 +219,22 @@ function renderSingleResult(
 	const finalOutput = getFinalOutput(r.messages);
 
 	if (expanded) {
-		return renderSingleExpanded(r, icon, error, displayItems, finalOutput, theme);
+		return renderSingleExpanded(
+			r,
+			delegationMode,
+			icon,
+			error,
+			displayItems,
+			finalOutput,
+			theme,
+		);
 	}
-	return renderSingleCollapsed(r, icon, error, displayItems, theme);
+	return renderSingleCollapsed(r, delegationMode, icon, error, displayItems, theme);
 }
 
 function renderSingleExpanded(
 	r: SingleResult,
+	delegationMode: DelegationMode,
 	icon: string,
 	error: boolean,
 	displayItems: DisplayItem[],
@@ -221,7 +245,7 @@ function renderSingleExpanded(
 	const container = new Container();
 
 	// Header
-	let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
+	let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource}, ${delegationMode})`)}`;
 	if (error && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 	container.addChild(new Text(header, 0, 0));
 	if (error && r.errorMessage) {
@@ -262,12 +286,13 @@ function renderSingleExpanded(
 
 function renderSingleCollapsed(
 	r: SingleResult,
+	delegationMode: DelegationMode,
 	icon: string,
 	error: boolean,
 	displayItems: DisplayItem[],
 	theme: { fg: ThemeFg; bold: (s: string) => string },
 ): Text {
-	let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
+	let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource}, ${delegationMode})`)}`;
 	if (error && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 
 	if (error && r.errorMessage) {
@@ -292,6 +317,7 @@ function renderSingleCollapsed(
 
 function renderParallelResult(
 	details: SubagentDetails,
+	delegationMode: DelegationMode,
 	expanded: boolean,
 	theme: { fg: ThemeFg; bold: (s: string) => string },
 ): Container | Text {
@@ -311,13 +337,22 @@ function renderParallelResult(
 		: `${successCount}/${details.results.length} tasks`;
 
 	if (expanded && !isRunning) {
-		return renderParallelExpanded(details, icon, status, theme);
+		return renderParallelExpanded(details, delegationMode, icon, status, theme);
 	}
-	return renderParallelCollapsed(details, icon, status, isRunning, expanded, theme);
+	return renderParallelCollapsed(
+		details,
+		delegationMode,
+		icon,
+		status,
+		isRunning,
+		expanded,
+		theme,
+	);
 }
 
 function renderParallelExpanded(
 	details: SubagentDetails,
+	delegationMode: DelegationMode,
 	icon: string,
 	status: string,
 	theme: { fg: ThemeFg; bold: (s: string) => string },
@@ -325,7 +360,11 @@ function renderParallelExpanded(
 	const mdTheme = getMarkdownTheme();
 	const container = new Container();
 	container.addChild(
-		new Text(`${icon} ${theme.fg("toolTitle", theme.bold("parallel "))}${theme.fg("accent", status)}`, 0, 0),
+		new Text(
+			`${icon} ${theme.fg("toolTitle", theme.bold("parallel "))}${theme.fg("accent", status)}${theme.fg("muted", ` [${delegationMode}]`)}`,
+			0,
+			0,
+		),
 	);
 
 	for (const r of details.results) {
@@ -363,13 +402,14 @@ function renderParallelExpanded(
 
 function renderParallelCollapsed(
 	details: SubagentDetails,
+	delegationMode: DelegationMode,
 	icon: string,
 	status: string,
 	isRunning: boolean,
 	expanded: boolean,
 	theme: { fg: ThemeFg; bold: (s: string) => string },
 ): Text {
-	let text = `${icon} ${theme.fg("toolTitle", theme.bold("parallel "))}${theme.fg("accent", status)}`;
+	let text = `${icon} ${theme.fg("toolTitle", theme.bold("parallel "))}${theme.fg("accent", status)}${theme.fg("muted", ` [${delegationMode}]`)}`;
 
 	for (const r of details.results) {
 		const rIcon = statusIcon(r, theme);
