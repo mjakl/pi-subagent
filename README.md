@@ -166,6 +166,7 @@ Each subagent always runs in a **separate `pi` process**:
 - ❌ No shared memory/state with the parent process
 - ❌ No visibility into sibling subagents
 - ✅ Its own model/tool/runtime loop
+- ✅ Started with `PI_OFFLINE=1` to skip startup network operations and reduce spawn latency
 
 What it can see depends on `mode`:
 
