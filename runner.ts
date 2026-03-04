@@ -22,6 +22,8 @@ import {
 const SIGKILL_TIMEOUT_MS = 5000;
 const SUBAGENT_DEPTH_ENV = "PI_SUBAGENT_DEPTH";
 const SUBAGENT_MAX_DEPTH_ENV = "PI_SUBAGENT_MAX_DEPTH";
+const SUBAGENT_STACK_ENV = "PI_SUBAGENT_STACK";
+const SUBAGENT_PREVENT_CYCLES_ENV = "PI_SUBAGENT_PREVENT_CYCLES";
 const PI_OFFLINE_ENV = "PI_OFFLINE";
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
@@ -154,8 +156,12 @@ export interface RunAgentOptions {
   forkSessionSnapshotJsonl?: string;
   /** Current delegation depth of the caller process. */
   parentDepth: number;
+  /** Delegation stack from the caller process (ancestor agent names). */
+  parentAgentStack: string[];
   /** Maximum allowed delegation depth to propagate to child processes. */
   maxDepth: number;
+  /** Whether cycle prevention should be enforced in child processes. */
+  preventCycles: boolean;
   /** Abort signal for cancellation. */
   signal?: AbortSignal;
   /** Streaming update callback. */
@@ -179,7 +185,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
     delegationMode,
     forkSessionSnapshotJsonl,
     parentDepth,
+    parentAgentStack,
     maxDepth,
+    preventCycles,
     signal,
     onUpdate,
     makeDetails,
@@ -273,6 +281,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
     const exitCode = await new Promise<number>((resolve) => {
       const nextDepth = Math.max(0, Math.floor(parentDepth)) + 1;
       const propagatedMaxDepth = Math.max(0, Math.floor(maxDepth));
+      const propagatedStack = [...parentAgentStack, agentName];
       const proc = spawn("pi", piArgs, {
         cwd: taskCwd ?? cwd,
         shell: false,
@@ -281,6 +290,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
           ...process.env,
           [SUBAGENT_DEPTH_ENV]: String(nextDepth),
           [SUBAGENT_MAX_DEPTH_ENV]: String(propagatedMaxDepth),
+          [SUBAGENT_STACK_ENV]: JSON.stringify(propagatedStack),
+          [SUBAGENT_PREVENT_CYCLES_ENV]: preventCycles ? "1" : "0",
           [PI_OFFLINE_ENV]: "1",
         },
       });

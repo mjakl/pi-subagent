@@ -35,9 +35,12 @@ import {
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const PARALLEL_HEARTBEAT_MS = 1000;
-const DEFAULT_MAX_DELEGATION_DEPTH = 1;
+const DEFAULT_MAX_DELEGATION_DEPTH = 3;
+const DEFAULT_PREVENT_CYCLE_DELEGATION = true;
 const SUBAGENT_DEPTH_ENV = "PI_SUBAGENT_DEPTH";
 const SUBAGENT_MAX_DEPTH_ENV = "PI_SUBAGENT_MAX_DEPTH";
+const SUBAGENT_STACK_ENV = "PI_SUBAGENT_STACK";
+const SUBAGENT_PREVENT_CYCLES_ENV = "PI_SUBAGENT_PREVENT_CYCLES";
 
 // ---------------------------------------------------------------------------
 // Tool parameter schema
@@ -104,6 +107,8 @@ interface DelegationDepthConfig {
   currentDepth: number;
   maxDepth: number;
   canDelegate: boolean;
+  ancestorAgentStack: string[];
+  preventCycles: boolean;
 }
 
 interface SessionSnapshotSource {
@@ -141,6 +146,34 @@ function parseNonNegativeInt(raw: unknown): number | null {
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
+function parseBoolean(raw: unknown): boolean | null {
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw !== "string") return null;
+  const normalized = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return null;
+}
+
+function parseAgentStack(raw: unknown): string[] | null {
+  if (raw === undefined) return [];
+  if (typeof raw !== "string") return null;
+  if (!raw.trim()) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  if (!Array.isArray(parsed)) return null;
+  if (!parsed.every((value) => typeof value === "string")) return null;
+  return parsed
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
+
 function getMaxDepthFlagFromArgv(argv: string[]): string | null {
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
@@ -149,6 +182,26 @@ function getMaxDepthFlagFromArgv(argv: string[]): string | null {
     }
     if (arg.startsWith("--subagent-max-depth=")) {
       return arg.slice("--subagent-max-depth=".length);
+    }
+  }
+  return null;
+}
+
+function getPreventCyclesFlagFromArgv(
+  argv: string[],
+): string | boolean | null {
+  for (let i = 2; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--subagent-prevent-cycles") {
+      const maybeValue = argv[i + 1];
+      if (maybeValue !== undefined && !maybeValue.startsWith("--")) {
+        return maybeValue;
+      }
+      return true;
+    }
+    if (arg === "--no-subagent-prevent-cycles") return false;
+    if (arg.startsWith("--subagent-prevent-cycles=")) {
+      return arg.slice("--subagent-prevent-cycles=".length);
     }
   }
   return null;
@@ -163,6 +216,14 @@ function resolveDelegationDepthConfig(pi: ExtensionAPI): DelegationDepthConfig {
     );
   }
   const currentDepth = parsedDepth ?? 0;
+
+  const stackRaw = process.env[SUBAGENT_STACK_ENV];
+  const ancestorAgentStack = parseAgentStack(stackRaw);
+  if (stackRaw !== undefined && ancestorAgentStack === null) {
+    console.warn(
+      `[pi-subagent] Ignoring invalid ${SUBAGENT_STACK_ENV} value. Expected a JSON array of agent names.`,
+    );
+  }
 
   const envMaxDepthRaw = process.env[SUBAGENT_MAX_DEPTH_ENV];
   const envMaxDepth = parseNonNegativeInt(envMaxDepthRaw);
@@ -196,9 +257,55 @@ function resolveDelegationDepthConfig(pi: ExtensionAPI): DelegationDepthConfig {
     );
   }
 
+  const envPreventCyclesRaw = process.env[SUBAGENT_PREVENT_CYCLES_ENV];
+  const envPreventCycles = parseBoolean(envPreventCyclesRaw);
+  if (envPreventCyclesRaw !== undefined && envPreventCycles === null) {
+    console.warn(
+      `[pi-subagent] Ignoring invalid ${SUBAGENT_PREVENT_CYCLES_ENV}="${envPreventCyclesRaw}". Expected true/false.`,
+    );
+  }
+
+  const argvPreventCyclesRaw = getPreventCyclesFlagFromArgv(process.argv);
+  const argvPreventCycles =
+    typeof argvPreventCyclesRaw === "boolean"
+      ? argvPreventCyclesRaw
+      : parseBoolean(argvPreventCyclesRaw);
+  if (
+    typeof argvPreventCyclesRaw === "string" &&
+    argvPreventCycles === null
+  ) {
+    console.warn(
+      `[pi-subagent] Ignoring invalid --subagent-prevent-cycles value "${argvPreventCyclesRaw}". Expected true/false.`,
+    );
+  }
+
+  const runtimePreventCyclesRaw = pi.getFlag("subagent-prevent-cycles");
+  const runtimePreventCycles = parseBoolean(runtimePreventCyclesRaw);
+  if (
+    argvPreventCyclesRaw === null &&
+    runtimePreventCyclesRaw !== undefined &&
+    runtimePreventCycles === null
+  ) {
+    console.warn(
+      `[pi-subagent] Ignoring invalid --subagent-prevent-cycles value "${String(runtimePreventCyclesRaw)}". Expected true/false.`,
+    );
+  }
+
   const flagMaxDepth = argvFlagMaxDepth ?? runtimeFlagMaxDepth;
   const maxDepth = flagMaxDepth ?? envMaxDepth ?? DEFAULT_MAX_DELEGATION_DEPTH;
-  return { currentDepth, maxDepth, canDelegate: currentDepth < maxDepth };
+  const preventCycles =
+    argvPreventCycles ??
+    runtimePreventCycles ??
+    envPreventCycles ??
+    DEFAULT_PREVENT_CYCLE_DELEGATION;
+
+  return {
+    currentDepth,
+    maxDepth,
+    canDelegate: currentDepth < maxDepth,
+    ancestorAgentStack: ancestorAgentStack ?? [],
+    preventCycles,
+  };
 }
 
 function makeDetailsFactory(
@@ -216,6 +323,15 @@ function makeDetailsFactory(
 
 function formatAgentNames(agents: AgentConfig[]): string {
   return agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
+}
+
+function getCycleViolations(
+  requestedNames: Set<string>,
+  ancestorAgentStack: string[],
+): string[] {
+  if (requestedNames.size === 0 || ancestorAgentStack.length === 0) return [];
+  const stackSet = new Set(ancestorAgentStack);
+  return Array.from(requestedNames).filter((name) => stackSet.has(name));
 }
 
 /** Get project-local agents referenced by the current request. */
@@ -253,12 +369,18 @@ async function confirmProjectAgentsIfNeeded(
 
 export default function (pi: ExtensionAPI) {
   pi.registerFlag("subagent-max-depth", {
-    description: "Maximum allowed subagent delegation depth (default: 1).",
+    description: "Maximum allowed subagent delegation depth (default: 3).",
     type: "string",
+  });
+  pi.registerFlag("subagent-prevent-cycles", {
+    description:
+      "Block delegating to agents already in the current delegation stack (default: true).",
+    type: "boolean",
   });
 
   const depthConfig = resolveDelegationDepthConfig(pi);
-  const { currentDepth, maxDepth, canDelegate } = depthConfig;
+  const { currentDepth, maxDepth, canDelegate, ancestorAgentStack, preventCycles } =
+    depthConfig;
 
   let discoveredAgents: AgentConfig[] = [];
 
@@ -316,6 +438,12 @@ Context behavior is controlled by optional 'mode':
 \`\`\`
 
 Use single mode for one task, parallel mode when tasks are independent and can run simultaneously.
+
+### Runtime delegation guards
+
+- Max depth: current depth ${currentDepth}, max depth ${maxDepth}
+- Cycle prevention: ${preventCycles ? "enabled" : "disabled"}
+- Current delegation stack: ${ancestorAgentStack.length > 0 ? ancestorAgentStack.join(" -> ") : "(root)"}
 `,
     };
   });
@@ -408,6 +536,32 @@ Use single mode for one task, parallel mode when tasks are independent and can r
         const requested = new Set<string>();
         if (params.tasks) for (const t of params.tasks) requested.add(t.agent);
         if (params.agent) requested.add(params.agent);
+
+        if (preventCycles) {
+          const cycleViolations = getCycleViolations(
+            requested,
+            ancestorAgentStack,
+          );
+          if (cycleViolations.length > 0) {
+            const stackText =
+              ancestorAgentStack.length > 0
+                ? ancestorAgentStack.join(" -> ")
+                : "(root)";
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Blocked: delegation cycle detected. Requested agent(s) already in the delegation stack: ${cycleViolations.join(", ")}.
+Current stack: ${stackText}
+
+This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A).`,
+                },
+              ],
+              details: makeDetails(hasTasks ? "parallel" : "single")([]),
+              isError: true,
+            };
+          }
+        }
 
         const requestedProjectAgents = getRequestedProjectAgents(
           agents,
@@ -520,7 +674,9 @@ Use single mode for one task, parallel mode when tasks are independent and can r
       delegationMode,
       forkSessionSnapshotJsonl,
       parentDepth: currentDepth,
+      parentAgentStack: ancestorAgentStack,
       maxDepth,
+      preventCycles,
       signal,
       onUpdate,
       makeDetails: makeDetails("single"),
@@ -625,7 +781,9 @@ Use single mode for one task, parallel mode when tasks are independent and can r
             delegationMode,
             forkSessionSnapshotJsonl,
             parentDepth: currentDepth,
+            parentAgentStack: ancestorAgentStack,
             maxDepth,
+            preventCycles,
             signal,
             onUpdate: (partial) => {
               if (partial.details?.results[0]) {

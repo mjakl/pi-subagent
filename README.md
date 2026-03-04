@@ -41,35 +41,51 @@ npm install
 
 ## Configuration
 
-### Delegation Depth (Nested Subagents)
+### Delegation Guards (Depth + Cycle Prevention)
 
-By default, this extension allows only one delegation hop:
+By default, this extension enforces two runtime guards:
 
-- Main agent runs at depth `0` and can call `subagent`
-- Child subagents run at depth `1` and **cannot** call `subagent` again
+1. **Depth guard** (`--subagent-max-depth`, default `3`)
+   - Main agent starts at depth `0`
+   - Delegation is allowed while `currentDepth < maxDepth`
+   - With default depth `3`: depth `0`, `1`, and `2` can delegate; depth `3` cannot
+2. **Cycle guard** (`--subagent-prevent-cycles`, default `true`)
+   - Blocks delegating to any agent name already present in the current delegation stack
+   - Prevents self-recursion (`writer -> writer`) and loops (`planner -> reviewer -> planner`)
 
-This prevents accidental recursive spawning by default.
-
-You can override the limit with either:
+You can configure depth with either:
 
 - CLI flag: `--subagent-max-depth <n>`
 - Environment variable: `PI_SUBAGENT_MAX_DEPTH=<n>`
 
 `n` must be a non-negative integer.
 
-`PI_SUBAGENT_DEPTH` is managed internally and propagated automatically to child subagent processes.
+You can configure cycle prevention with either:
+
+- CLI flag: `--subagent-prevent-cycles` / `--no-subagent-prevent-cycles`
+- Environment variable: `PI_SUBAGENT_PREVENT_CYCLES=true|false`
+
+Internal env vars managed by the extension and propagated to child processes:
+
+- `PI_SUBAGENT_DEPTH`
+- `PI_SUBAGENT_MAX_DEPTH`
+- `PI_SUBAGENT_STACK` (JSON array of ancestor agent names, e.g. `["scout","planner"]`)
+- `PI_SUBAGENT_PREVENT_CYCLES`
 
 Examples:
 
 ```bash
-# Default behavior (equivalent): max depth 1
+# Default behavior: depth 3 + cycle prevention enabled
 pi
 
-# Allow one nested level (main -> child -> grandchild)
+# Restrict to one nested level (main -> child -> grandchild)
 pi --subagent-max-depth 2
 
 # Disable subagent delegation entirely
 pi --subagent-max-depth 0
+
+# Allow depth 3 but disable cycle prevention (not recommended)
+pi --subagent-max-depth 3 --no-subagent-prevent-cycles
 ```
 
 ### Context Mode (`spawn` vs `fork`)
@@ -235,7 +251,7 @@ Parallel: 3/3 succeeded
 
 - **Auto-Discovery** — Agents are found at startup and their descriptions are injected into the main agent's system prompt.
 - **Context Mode Switch** — `spawn` (fresh context) and `fork` (session snapshot + task) per call.
-- **Depth Guard** — Delegation depth is limited by default to prevent recursive subagent spawning.
+- **Depth + Cycle Guards** — Depth limiting and ancestry-cycle checks prevent runaway recursive delegation by default.
 - **Streaming Updates** — Watch subagent progress in real-time as tool calls and outputs stream in.
 - **Rich TUI Rendering** — Collapsed/expanded views with usage stats, tool call previews, and markdown output.
 - **Security Confirmation** — Project-local agents require explicit user approval before execution.
