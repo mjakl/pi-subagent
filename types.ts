@@ -3,6 +3,7 @@
  */
 
 import type { Message } from "@mariozechner/pi-ai";
+import { getFinalAssistantText } from "./runner-events.js";
 
 /** Context mode for delegated runs. */
 export type DelegationMode = "spawn" | "fork";
@@ -74,15 +75,7 @@ export function isResultError(r: SingleResult): boolean {
 
 /** Extract the last assistant text from a message history. */
 export function getFinalOutput(messages: Message[]): string {
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const msg = messages[i];
-		if (msg.role === "assistant") {
-			for (const part of msg.content) {
-				if (part.type === "text") return part.text;
-			}
-		}
-	}
-	return "";
+	return getFinalAssistantText(messages);
 }
 
 /** Extract all display-worthy items from a message history. */

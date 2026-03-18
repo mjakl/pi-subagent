@@ -9,8 +9,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
-import type { Message } from "@mariozechner/pi-ai";
 import type { AgentConfig } from "./agents.js";
+import { processPiJsonLine } from "./runner-events.js";
 import {
   type DelegationMode,
   type SingleResult,
@@ -61,50 +61,6 @@ function cleanupTempDir(dir: string | null): void {
   } catch {
     /* ignore */
   }
-}
-
-// ---------------------------------------------------------------------------
-// JSON-line stream processing
-// ---------------------------------------------------------------------------
-
-function processJsonLine(line: string, result: SingleResult): boolean {
-  if (!line.trim()) return false;
-
-  let event: any;
-  try {
-    event = JSON.parse(line);
-  } catch {
-    return false;
-  }
-
-  if (event.type === "message_end" && event.message) {
-    const msg = event.message as Message;
-    result.messages.push(msg);
-
-    if (msg.role === "assistant") {
-      result.usage.turns++;
-      const usage = msg.usage;
-      if (usage) {
-        result.usage.input += usage.input || 0;
-        result.usage.output += usage.output || 0;
-        result.usage.cacheRead += usage.cacheRead || 0;
-        result.usage.cacheWrite += usage.cacheWrite || 0;
-        result.usage.cost += usage.cost?.total || 0;
-        result.usage.contextTokens = usage.totalTokens || 0;
-      }
-      if (!result.model && msg.model) result.model = msg.model;
-      if (msg.stopReason) result.stopReason = msg.stopReason;
-      if (msg.errorMessage) result.errorMessage = msg.errorMessage;
-    }
-    return true;
-  }
-
-  if (event.type === "tool_result_end" && event.message) {
-    result.messages.push(event.message as Message);
-    return true;
-  }
-
-  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -299,7 +255,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
       let buffer = "";
 
       const flushLine = (line: string) => {
-        if (processJsonLine(line, result)) emitUpdate();
+        if (processPiJsonLine(line, result)) emitUpdate();
       };
 
       proc.stdout.on("data", (chunk: Buffer) => {
@@ -318,7 +274,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
         resolve(code ?? 0);
       });
 
-      proc.on("error", () => resolve(1));
+      proc.on("error", (err) => {
+        if (!result.stderr.trim()) result.stderr = err.message;
+        resolve(1);
+      });
 
       // Abort handling
       if (signal) {
@@ -340,6 +299,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
       result.stopReason = "aborted";
       result.errorMessage = "Subagent was aborted.";
       if (!result.stderr.trim()) result.stderr = "Subagent was aborted.";
+    } else if (result.exitCode > 0) {
+      if (!result.stopReason) result.stopReason = "error";
+      if (!result.errorMessage && result.stderr.trim()) {
+        result.errorMessage = result.stderr.trim();
+      }
     }
     return result;
   } finally {

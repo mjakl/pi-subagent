@@ -5,6 +5,7 @@
 import * as os from "node:os";
 import { getMarkdownTheme } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
+import { getResultSummaryText } from "./runner-events.js";
 import {
 	type DelegationMode,
 	type DisplayItem,
@@ -261,7 +262,8 @@ function renderSingleExpanded(
 	container.addChild(new Spacer(1));
 	container.addChild(new Text(theme.fg("muted", "─── Output ───"), 0, 0));
 	if (displayItems.length === 0 && !finalOutput) {
-		container.addChild(new Text(theme.fg("muted", "(no output)"), 0, 0));
+		const summary = getResultSummaryText(r);
+		container.addChild(new Text(theme.fg("muted", summary), 0, 0));
 	} else {
 		for (const item of displayItems) {
 			if (item.type === "toolCall") {
@@ -298,7 +300,7 @@ function renderSingleCollapsed(
 	if (error && r.errorMessage) {
 		text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
 	} else if (displayItems.length === 0) {
-		text += `\n${theme.fg("muted", "(no output)")}`;
+		text += `\n${theme.fg(error ? "error" : "muted", getResultSummaryText(r))}`;
 	} else {
 		text += `\n${renderDisplayItems(displayItems, false, theme, COLLAPSED_LINE_COUNT)}`;
 		if (countDisplayLines(displayItems) > COLLAPSED_LINE_COUNT) {
@@ -385,6 +387,9 @@ function renderParallelExpanded(
 		if (finalOutput) {
 			container.addChild(new Spacer(1));
 			container.addChild(new Markdown(finalOutput.trim(), 0, 0, mdTheme));
+		} else if (isResultError(r)) {
+			container.addChild(new Spacer(1));
+			container.addChild(new Text(theme.fg("error", getResultSummaryText(r)), 0, 0));
 		}
 
 		const taskUsage = formatUsage(r.usage, r.model);
@@ -416,7 +421,7 @@ function renderParallelCollapsed(
 		const displayItems = getDisplayItems(r.messages);
 		text += `\n\n${theme.fg("muted", "─── ")}${theme.fg("accent", r.agent)} ${rIcon}`;
 		if (displayItems.length === 0) {
-			text += `\n${theme.fg("muted", r.exitCode === -1 ? "(running...)" : "(no output)")}`;
+			text += `\n${theme.fg(r.exitCode === -1 ? "muted" : isResultError(r) ? "error" : "muted", r.exitCode === -1 ? "(running...)" : getResultSummaryText(r))}`;
 		} else {
 			text += `\n${renderDisplayItems(displayItems, false, theme, COLLAPSED_PARALLEL_LINE_COUNT)}`;
 		}

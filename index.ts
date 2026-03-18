@@ -17,6 +17,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { type AgentConfig, discoverAgents } from "./agents.js";
 import { renderCall, renderResult } from "./render.js";
+import { getResultSummaryText } from "./runner-events.js";
 import { mapConcurrent, runAgent } from "./runner.js";
 import {
   type DelegationMode,
@@ -24,7 +25,6 @@ import {
   type SubagentDetails,
   DEFAULT_DELEGATION_MODE,
   emptyUsage,
-  getFinalOutput,
   isResultError,
 } from "./types.js";
 
@@ -683,16 +683,11 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
     });
 
     if (isResultError(result)) {
-      const errorMsg =
-        result.errorMessage ||
-        result.stderr ||
-        getFinalOutput(result.messages) ||
-        "(no output)";
       return {
         content: [
           {
             type: "text" as const,
-            text: `Agent ${result.stopReason || "failed"}: ${errorMsg}`,
+            text: `Agent ${result.stopReason || "failed"}: ${getResultSummaryText(result)}`,
           },
         ],
         details: makeDetails("single")([result]),
@@ -703,7 +698,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
       content: [
         {
           type: "text" as const,
-          text: getFinalOutput(result.messages) || "(no output)",
+          text: getResultSummaryText(result),
         },
       ],
       details: makeDetails("single")([result]),
@@ -803,10 +798,9 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
     }
 
     const successCount = results.filter((r) => r.exitCode === 0).length;
-    const summaries = results.map((r) => {
-      const output = getFinalOutput(r.messages);
-      return `[${r.agent}] ${r.exitCode === 0 ? "completed" : "failed"}: ${output || "(no output)"}`;
-    });
+    const summaries = results.map((r) =>
+      `[${r.agent}] ${r.exitCode === 0 ? "completed" : "failed"}: ${getResultSummaryText(r)}`,
+    );
 
     return {
       content: [

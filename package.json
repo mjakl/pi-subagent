@@ -1,6 +1,6 @@
 {
   "name": "@mjakl/pi-subagent",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Subagent extension for Pi coding agent. Delegate tasks to specialized agents.",
   "type": "module",
   "main": "index.ts",
@@ -8,6 +8,7 @@
     "index.ts",
     "agents.ts",
     "runner.ts",
+    "runner-events.js",
     "render.ts",
     "types.ts",
     "agents/*.md",
@@ -18,6 +19,9 @@
     "extensions": [
       "./index.ts"
     ]
+  },
+  "scripts": {
+    "test": "node --test"
   },
   "keywords": [
     "pi",
