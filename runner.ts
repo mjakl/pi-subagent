@@ -19,6 +19,7 @@ import {
   getFinalOutput,
 } from "./types.js";
 
+const isWindows = process.platform === "win32";
 const SIGKILL_TIMEOUT_MS = 5000;
 const SUBAGENT_DEPTH_ENV = "PI_SUBAGENT_DEPTH";
 const SUBAGENT_MAX_DEPTH_ENV = "PI_SUBAGENT_MAX_DEPTH";
@@ -27,6 +28,22 @@ const SUBAGENT_PREVENT_CYCLES_ENV = "PI_SUBAGENT_PREVENT_CYCLES";
 const PI_OFFLINE_ENV = "PI_OFFLINE";
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
+
+// ---------------------------------------------------------------------------
+// Process helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the spawn command from the current process context so child invocations
+ * work on Unix and Windows without going through a shell wrapper.
+ */
+function resolvePiSpawn(): { command: string; prefixArgs: string[] } {
+  const isNode = /[\\/]node(?:\.exe)?$/i.test(process.execPath);
+  if (isNode && process.argv[1]) {
+    return { command: process.execPath, prefixArgs: [process.argv[1]] };
+  }
+  return { command: process.execPath, prefixArgs: [] };
+}
 
 // ---------------------------------------------------------------------------
 // Temp file helpers
@@ -238,10 +255,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
       const nextDepth = Math.max(0, Math.floor(parentDepth)) + 1;
       const propagatedMaxDepth = Math.max(0, Math.floor(maxDepth));
       const propagatedStack = [...parentAgentStack, agentName];
-      const proc = spawn("pi", piArgs, {
+      const { command, prefixArgs } = resolvePiSpawn();
+      const proc = spawn(command, [...prefixArgs, ...piArgs], {
         cwd: taskCwd ?? cwd,
         shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["pipe", "pipe", "pipe"],
         env: {
           ...process.env,
           [SUBAGENT_DEPTH_ENV]: String(nextDepth),
@@ -252,7 +270,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
         },
       });
 
+      proc.stdin.on("error", () => {
+        /* ignore broken pipe on fast exits */
+      });
+      proc.stdin.end();
+
       let buffer = "";
+      let didClose = false;
 
       const flushLine = (line: string) => {
         if (processPiJsonLine(line, result)) emitUpdate();
@@ -260,7 +284,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
 
       proc.stdout.on("data", (chunk: Buffer) => {
         buffer += chunk.toString();
-        const lines = buffer.split("\n");
+        const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() || "";
         for (const line of lines) flushLine(line);
       });
@@ -270,6 +294,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
       });
 
       proc.on("close", (code) => {
+        didClose = true;
         if (buffer.trim()) flushLine(buffer);
         resolve(code ?? 0);
       });
@@ -283,10 +308,21 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
       if (signal) {
         const kill = () => {
           wasAborted = true;
+          if (isWindows) {
+            if (proc.pid !== undefined) {
+              const killer = spawn("taskkill", ["/T", "/F", "/PID", String(proc.pid)], {
+                stdio: "ignore",
+              });
+              killer.unref();
+            }
+            return;
+          }
+
           proc.kill("SIGTERM");
-          setTimeout(() => {
-            if (!proc.killed) proc.kill("SIGKILL");
+          const sigkillTimer = setTimeout(() => {
+            if (!didClose) proc.kill("SIGKILL");
           }, SIGKILL_TIMEOUT_MS);
+          sigkillTimer.unref();
         };
         if (signal.aborted) kill();
         else signal.addEventListener("abort", kill, { once: true });
