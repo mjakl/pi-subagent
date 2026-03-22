@@ -25,7 +25,7 @@ export interface UsageStats {
 /** Result of a single subagent invocation. */
 export interface SingleResult {
 	agent: string;
-	agentSource: "user" | "project" | "unknown";
+	agentSource: "user" | "env" | "project" | "unknown";
 	task: string;
 	exitCode: number;
 	messages: Message[];

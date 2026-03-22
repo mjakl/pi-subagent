@@ -117,9 +117,10 @@ If omitted, mode defaults to `spawn`.
 Subagents are defined as Markdown files with YAML frontmatter.
 
 **User Agents:** `~/.pi/agent/agents/*.md`
+**Env Agents:** `$PI_CODING_AGENT_DIR/agents/*.md` (when `PI_CODING_AGENT_DIR` is set)
 **Project Agents:** `.pi/agents/*.md`
 
-The extension always loads agents from both locations. If a project agent shares a name with a user agent, the project agent wins. When project agents are requested, Pi will prompt for confirmation before running them.
+The extension always loads agents from all configured locations. Name conflicts resolve in this order: user < env < project. That means project agents win over env agents, and env agents win over user agents. When project agents are requested, Pi will prompt for confirmation before running them.
 
 Example agent (`~/.pi/agent/agents/writer.md`):
 

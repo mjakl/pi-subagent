@@ -6,6 +6,7 @@
  *
  * Lookup locations:
  *   - User agents:    ~/.pi/agent/agents/*.md
+ *   - Env agents:     $PI_CODING_AGENT_DIR/agents/*.md  (when env var is set)
  *   - Project agents: .pi/agents/*.md  (walks up from cwd)
  */
 
@@ -23,7 +24,7 @@ export interface AgentConfig {
 	model?: string;
 	thinking?: string;
 	systemPrompt: string;
-	source: "user" | "project";
+	source: "user" | "env" | "project";
 	filePath: string;
 }
 
@@ -53,7 +54,7 @@ function findNearestProjectAgentsDir(cwd: string): string | null {
 }
 
 /** Parse a single agent markdown file into an AgentConfig. Returns null on skip. */
-function parseAgentFile(filePath: string, source: "user" | "project"): AgentConfig | null {
+function parseAgentFile(filePath: string, source: "user" | "env" | "project"): AgentConfig | null {
 	let content: string;
 	try { content = fs.readFileSync(filePath, "utf-8"); } catch { return null; }
 
@@ -105,11 +106,12 @@ function parseAgentFile(filePath: string, source: "user" | "project"): AgentConf
 }
 
 /** Load all agent definitions from a directory. */
-function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig[] {
+function loadAgentsFromDir(dir: string, source: "user" | "env" | "project"): AgentConfig[] {
 	if (!fs.existsSync(dir)) return [];
 
 	let entries: fs.Dirent[];
 	try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+	entries.sort((a, b) => a.name.localeCompare(b.name));
 
 	const agents: AgentConfig[] = [];
 	for (const entry of entries) {
@@ -122,6 +124,20 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 	return agents;
 }
 
+function getEnvAgentsDir(): string | null {
+	const raw = process.env["PI_CODING_AGENT_DIR"];
+	if (!raw || !raw.trim()) return null;
+	return path.join(raw.trim(), "agents");
+}
+
+function mergeAgents(...groups: AgentConfig[][]): AgentConfig[] {
+	const agentMap = new Map<string, AgentConfig>();
+	for (const group of groups) {
+		for (const agent of group) agentMap.set(agent.name, agent);
+	}
+	return Array.from(agentMap.values());
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -129,21 +145,25 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 /**
  * Discover all available agents according to the requested scope.
  *
- * When scope is "both", project agents override user agents with the same name.
+ * Precedence is: user < env < project.
  */
 export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
 	const userDir = path.join(os.homedir(), ".pi", "agent", "agents");
+	const envAgentsDir = getEnvAgentsDir();
 	const projectAgentsDir = findNearestProjectAgentsDir(cwd);
 
 	const userAgents = scope === "project" ? [] : loadAgentsFromDir(userDir, "user");
+	const envAgents = scope === "project" || !envAgentsDir ? [] : loadAgentsFromDir(envAgentsDir, "env");
 	const projectAgents = scope === "user" || !projectAgentsDir ? [] : loadAgentsFromDir(projectAgentsDir, "project");
 
-	// Deduplicate by name; project agents win in "both" mode.
-	const agentMap = new Map<string, AgentConfig>();
-	for (const agent of userAgents) agentMap.set(agent.name, agent);
-	if (scope !== "user") {
-		for (const agent of projectAgents) agentMap.set(agent.name, agent);
+	if (scope === "user") {
+		return { agents: mergeAgents(userAgents, envAgents), projectAgentsDir };
 	}
-
-	return { agents: Array.from(agentMap.values()), projectAgentsDir };
+	if (scope === "project") {
+		return { agents: projectAgents, projectAgentsDir };
+	}
+	return {
+		agents: mergeAgents(userAgents, envAgents, projectAgents),
+		projectAgentsDir,
+	};
 }
