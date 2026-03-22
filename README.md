@@ -116,11 +116,10 @@ If omitted, mode defaults to `spawn`.
 
 Subagents are defined as Markdown files with YAML frontmatter.
 
-**User Agents:** `~/.pi/agent/agents/*.md`
-**Env Agents:** `$PI_CODING_AGENT_DIR/agents/*.md` (when `PI_CODING_AGENT_DIR` is set)
+**User Agents:** `~/.pi/agent/agents/*.md` by default, or `$PI_CODING_AGENT_DIR/agents/*.md` when `PI_CODING_AGENT_DIR` is set
 **Project Agents:** `.pi/agents/*.md`
 
-The extension always loads agents from all configured locations. Name conflicts resolve in this order: user < env < project. That means project agents win over env agents, and env agents win over user agents. When project agents are requested, Pi will prompt for confirmation before running them.
+`PI_CODING_AGENT_DIR` follows Pi's config-dir override semantics: when it is set, the extension uses `$PI_CODING_AGENT_DIR/agents` as the user/global agent directory instead of `~/.pi/agent/agents`. Project agents are still loaded in addition to the active user/global directory, and project agents win on name conflicts. When project agents are requested, Pi will prompt for confirmation before running them.
 
 Example agent (`~/.pi/agent/agents/writer.md`):
 
@@ -184,7 +183,7 @@ Each subagent always runs in a **separate `pi` process**:
 - ❌ No visibility into sibling subagents
 - ✅ Its own model/tool/runtime loop
 - ✅ Started with `PI_OFFLINE=1` to skip startup network operations and reduce spawn latency
-- ✅ Inherits relevant parent CLI configuration such as extensions, provider/theme/skill flags, and parent `--model` / `--thinking` / `--tools` values when the agent file does not override them
+- ✅ Inherits relevant parent CLI configuration such as extensions, provider/theme/skill flags, resolves inherited relative resource paths against the parent cwd, and reuses parent `--model` / `--thinking` / `--tools` values when the agent file does not override them
 
 What it can see depends on `mode`:
 
@@ -261,11 +260,12 @@ Parallel: 3/3 succeeded
 ## Project Structure
 
 ```
-index.ts    — Extension entry point: lifecycle hooks, tool registration, mode orchestration
-agents.ts   — Agent discovery: reads and parses .md files from user/project directories
-runner.ts   — Process runner: starts `pi` subprocesses in spawn/fork context modes and streams JSON events
-render.ts   — TUI rendering: renderCall and renderResult for the subagent tool
-types.ts    — Shared types and pure helper functions
+index.ts       — Extension entry point: lifecycle hooks, tool registration, mode orchestration
+agents.ts      — Agent discovery: reads and parses .md files from the active Pi config dir and project directories
+runner-cli.js  — Parent CLI inheritance: parses and normalizes flags forwarded to child processes
+runner.ts      — Process runner: starts `pi` subprocesses in spawn/fork context modes and streams JSON events
+render.ts      — TUI rendering: renderCall and renderResult for the subagent tool
+types.ts       — Shared types and pure helper functions
 ```
 
 ## Attribution

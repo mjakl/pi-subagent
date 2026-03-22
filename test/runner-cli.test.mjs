@@ -85,6 +85,65 @@ test("resolves relative extension paths against the parent cwd", () => {
   }
 });
 
+test("resolves inherited relative resource paths against the parent cwd", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-cli-"));
+  const skillPath = path.join(tmpDir, "skills", "research", "SKILL.md");
+  const promptPath = path.join(tmpDir, "prompts", "review.md");
+  const themePath = path.join(tmpDir, "themes", "custom.json");
+  const sessionDir = path.join(tmpDir, ".sessions", "nested");
+
+  fs.mkdirSync(path.dirname(skillPath), { recursive: true });
+  fs.mkdirSync(path.dirname(promptPath), { recursive: true });
+  fs.mkdirSync(path.dirname(themePath), { recursive: true });
+  fs.writeFileSync(skillPath, "# skill\n");
+  fs.writeFileSync(promptPath, "# prompt\n");
+  fs.writeFileSync(themePath, "{}\n");
+
+  const previousCwd = process.cwd();
+  process.chdir(tmpDir);
+
+  try {
+    const parsed = parseInheritedCliArgs([
+      "/usr/bin/node",
+      "pi",
+      "--skill",
+      "./skills/research/SKILL.md",
+      "--prompt-template",
+      "prompts/review.md",
+      "--theme",
+      "dark",
+      "--theme",
+      "my-org/dark",
+      "--theme",
+      "./themes/custom.json",
+      "--session-dir",
+      "./.sessions/nested",
+      "--system-prompt",
+      "You are helpful",
+    ]);
+
+    assert.deepEqual(parsed.alwaysProxy, [
+      "--skill",
+      skillPath,
+      "--prompt-template",
+      promptPath,
+      "--theme",
+      "dark",
+      "--theme",
+      "my-org/dark",
+      "--theme",
+      themePath,
+      "--session-dir",
+      sessionDir,
+      "--system-prompt",
+      "You are helpful",
+    ]);
+  } finally {
+    process.chdir(previousCwd);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test("inherits no-tools when the parent disabled tools", () => {
   const parsed = parseInheritedCliArgs([
     "/usr/bin/node",

@@ -5,8 +5,8 @@
  * optional model/tools, and a system prompt body.
  *
  * Lookup locations:
- *   - User agents:    ~/.pi/agent/agents/*.md
- *   - Env agents:     $PI_CODING_AGENT_DIR/agents/*.md  (when env var is set)
+ *   - User agents:    ~/.pi/agent/agents/*.md by default, or
+ *                     $PI_CODING_AGENT_DIR/agents/*.md when the env var is set
  *   - Project agents: .pi/agents/*.md  (walks up from cwd)
  */
 
@@ -24,7 +24,7 @@ export interface AgentConfig {
 	model?: string;
 	thinking?: string;
 	systemPrompt: string;
-	source: "user" | "env" | "project";
+	source: "user" | "project";
 	filePath: string;
 }
 
@@ -41,6 +41,11 @@ function isDirectory(p: string): boolean {
 	try { return fs.statSync(p).isDirectory(); } catch { return false; }
 }
 
+function getUserAgentsDir(): string {
+	const configDir = process.env["PI_CODING_AGENT_DIR"]?.trim() || path.join(os.homedir(), ".pi", "agent");
+	return path.join(configDir, "agents");
+}
+
 /** Walk up from `cwd` looking for a `.pi/agents` directory. */
 function findNearestProjectAgentsDir(cwd: string): string | null {
 	let dir = cwd;
@@ -54,7 +59,7 @@ function findNearestProjectAgentsDir(cwd: string): string | null {
 }
 
 /** Parse a single agent markdown file into an AgentConfig. Returns null on skip. */
-function parseAgentFile(filePath: string, source: "user" | "env" | "project"): AgentConfig | null {
+function parseAgentFile(filePath: string, source: "user" | "project"): AgentConfig | null {
 	let content: string;
 	try { content = fs.readFileSync(filePath, "utf-8"); } catch { return null; }
 
@@ -106,7 +111,7 @@ function parseAgentFile(filePath: string, source: "user" | "env" | "project"): A
 }
 
 /** Load all agent definitions from a directory. */
-function loadAgentsFromDir(dir: string, source: "user" | "env" | "project"): AgentConfig[] {
+function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig[] {
 	if (!fs.existsSync(dir)) return [];
 
 	let entries: fs.Dirent[];
@@ -124,12 +129,6 @@ function loadAgentsFromDir(dir: string, source: "user" | "env" | "project"): Age
 	return agents;
 }
 
-function getEnvAgentsDir(): string | null {
-	const raw = process.env["PI_CODING_AGENT_DIR"];
-	if (!raw || !raw.trim()) return null;
-	return path.join(raw.trim(), "agents");
-}
-
 function mergeAgents(...groups: AgentConfig[][]): AgentConfig[] {
 	const agentMap = new Map<string, AgentConfig>();
 	for (const group of groups) {
@@ -145,25 +144,23 @@ function mergeAgents(...groups: AgentConfig[][]): AgentConfig[] {
 /**
  * Discover all available agents according to the requested scope.
  *
- * Precedence is: user < env < project.
+ * Precedence is: user < project.
  */
 export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
-	const userDir = path.join(os.homedir(), ".pi", "agent", "agents");
-	const envAgentsDir = getEnvAgentsDir();
+	const userAgentsDir = getUserAgentsDir();
 	const projectAgentsDir = findNearestProjectAgentsDir(cwd);
 
-	const userAgents = scope === "project" ? [] : loadAgentsFromDir(userDir, "user");
-	const envAgents = scope === "project" || !envAgentsDir ? [] : loadAgentsFromDir(envAgentsDir, "env");
+	const userAgents = scope === "project" ? [] : loadAgentsFromDir(userAgentsDir, "user");
 	const projectAgents = scope === "user" || !projectAgentsDir ? [] : loadAgentsFromDir(projectAgentsDir, "project");
 
 	if (scope === "user") {
-		return { agents: mergeAgents(userAgents, envAgents), projectAgentsDir };
+		return { agents: userAgents, projectAgentsDir };
 	}
 	if (scope === "project") {
 		return { agents: projectAgents, projectAgentsDir };
 	}
 	return {
-		agents: mergeAgents(userAgents, envAgents, projectAgents),
+		agents: mergeAgents(userAgents, projectAgents),
 		projectAgentsDir,
 	};
 }

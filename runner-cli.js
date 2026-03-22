@@ -6,14 +6,32 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-function resolveExtensionArg(value) {
+function looksLikeExplicitRelativePath(value) {
+  return (
+    value.startsWith("./") ||
+    value.startsWith("../") ||
+    value.startsWith(".\\") ||
+    value.startsWith("..\\")
+  );
+}
+
+function resolvePathArg(value, options = {}) {
+  const { allowPackageSource = false, alwaysResolveRelative = false } = options;
   if (!value) return value;
-  if (value.startsWith("npm:") || value.startsWith("git:")) return value;
+  if (allowPackageSource && (value.startsWith("npm:") || value.startsWith("git:"))) return value;
   if (value.startsWith("~/")) return path.join(os.homedir(), value.slice(2));
   if (path.isAbsolute(value)) return value;
 
   const resolved = path.resolve(process.cwd(), value);
-  return fs.existsSync(resolved) ? resolved : value;
+  if (
+    alwaysResolveRelative ||
+    looksLikeExplicitRelativePath(value) ||
+    path.extname(value) !== "" ||
+    fs.existsSync(resolved)
+  ) {
+    return resolved;
+  }
+  return value;
 }
 
 /**
@@ -66,13 +84,9 @@ export function parseInheritedCliArgs(argv) {
       continue;
     }
 
-    if (flagName === "--subagent-prevent-cycles") {
-      i += inlineValue !== undefined || nextIsValue ? (inlineValue !== undefined ? 1 : 2) : 1;
-      continue;
-    }
-
-    if (flagName === "--list-models") {
-      i += inlineValue !== undefined || nextIsValue ? (inlineValue !== undefined ? 1 : 2) : 1;
+    if (["--subagent-prevent-cycles", "--list-models"].includes(flagName)) {
+      const [, skip] = getValue();
+      i += skip;
       continue;
     }
 
@@ -106,7 +120,23 @@ export function parseInheritedCliArgs(argv) {
     if (flagName === "--extension" || flagName === "-e") {
       const [value, skip] = getValue();
       if (value !== undefined) {
-        extensionArgs.push(flagName, resolveExtensionArg(value));
+        extensionArgs.push(flagName, resolvePathArg(value, { allowPackageSource: true }));
+      }
+      i += skip;
+      continue;
+    }
+
+    if (["--skill", "--prompt-template", "--theme"].includes(flagName)) {
+      const [value, skip] = getValue();
+      if (value !== undefined) alwaysProxy.push(flagName, resolvePathArg(value));
+      i += skip;
+      continue;
+    }
+
+    if (flagName === "--session-dir") {
+      const [value, skip] = getValue();
+      if (value !== undefined) {
+        alwaysProxy.push(flagName, resolvePathArg(value, { alwaysResolveRelative: true }));
       }
       i += skip;
       continue;
@@ -117,11 +147,7 @@ export function parseInheritedCliArgs(argv) {
         "--provider",
         "--api-key",
         "--system-prompt",
-        "--session-dir",
         "--models",
-        "--skill",
-        "--prompt-template",
-        "--theme",
       ].includes(flagName)
     ) {
       const [value, skip] = getValue();
