@@ -8,6 +8,7 @@
     "index.ts",
     "agents.ts",
     "runner.ts",
+    "runner-cli.js",
     "runner-events.js",
     "render.ts",
     "types.ts",

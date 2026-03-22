@@ -10,6 +10,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { AgentConfig } from "./agents.js";
+import { parseInheritedCliArgs } from "./runner-cli.js";
 import { processPiJsonLine } from "./runner-events.js";
 import {
   type DelegationMode,
@@ -84,6 +85,8 @@ function cleanupTempDir(dir: string | null): void {
 // Build pi CLI arguments
 // ---------------------------------------------------------------------------
 
+const inheritedCliArgs = parseInheritedCliArgs(process.argv);
+
 function buildPiArgs(
   agent: AgentConfig,
   systemPromptPath: string | null,
@@ -91,7 +94,13 @@ function buildPiArgs(
   delegationMode: DelegationMode,
   forkSessionPath: string | null,
 ): string[] {
-  const args: string[] = ["--mode", "json", "-p"];
+  const args: string[] = [
+    "--mode",
+    "json",
+    ...inheritedCliArgs.extensionArgs,
+    ...inheritedCliArgs.alwaysProxy,
+    "-p",
+  ];
 
   if (delegationMode === "spawn") {
     args.push("--no-session");
@@ -99,10 +108,22 @@ function buildPiArgs(
     args.push("--session", forkSessionPath);
   }
 
-  if (agent.model) args.push("--model", agent.model);
-  if (agent.thinking) args.push("--thinking", agent.thinking);
-  if (agent.tools && agent.tools.length > 0)
+  const model = agent.model ?? inheritedCliArgs.fallbackModel;
+  if (model) args.push("--model", model);
+
+  const thinking = agent.thinking ?? inheritedCliArgs.fallbackThinking;
+  if (thinking) args.push("--thinking", thinking);
+
+  if (agent.tools && agent.tools.length > 0) {
     args.push("--tools", agent.tools.join(","));
+  } else if (agent.tools === undefined) {
+    if (inheritedCliArgs.fallbackTools !== undefined) {
+      args.push("--tools", inheritedCliArgs.fallbackTools);
+    } else if (inheritedCliArgs.fallbackNoTools) {
+      args.push("--no-tools");
+    }
+  }
+
   if (systemPromptPath) args.push("--append-system-prompt", systemPromptPath);
   args.push(`Task: ${task}`);
   return args;

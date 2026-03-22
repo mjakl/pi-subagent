@@ -183,6 +183,7 @@ Each subagent always runs in a **separate `pi` process**:
 - ❌ No visibility into sibling subagents
 - ✅ Its own model/tool/runtime loop
 - ✅ Started with `PI_OFFLINE=1` to skip startup network operations and reduce spawn latency
+- ✅ Inherits relevant parent CLI configuration such as extensions, provider/theme/skill flags, and parent `--model` / `--thinking` / `--tools` values when the agent file does not override them
 
 What it can see depends on `mode`:
 
