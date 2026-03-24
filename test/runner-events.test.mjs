@@ -82,6 +82,9 @@ test("deduplicates assistant messages repeated across message_end, turn_end, and
   assert.equal(result.usage.turns, 1);
   assert.equal(result.usage.input, 1);
   assert.equal(result.usage.output, 2);
+  assert.equal(result.sawAssistantMessageEnd, true);
+  assert.equal(result.sawAssistantTurnEnd, true);
+  assert.equal(result.sawAgentEnd, true);
 });
 
 test("non-zero exit code does not hide the final assistant text", () => {

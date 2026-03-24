@@ -80,12 +80,15 @@ export function processPiEvent(event, result) {
 
   switch (event.type) {
     case "message_end":
+      if (event.message?.role === "assistant") result.sawAssistantMessageEnd = true;
       return addAssistantMessage(result, event.message);
 
     case "turn_end":
+      if (event.message?.role === "assistant") result.sawAssistantTurnEnd = true;
       return addAssistantMessage(result, event.message);
 
     case "agent_end":
+      result.sawAgentEnd = true;
       return addAssistantMessages(result, event.messages);
 
     default:

@@ -28,12 +28,16 @@ export interface SingleResult {
 	agentSource: "user" | "project" | "unknown";
 	task: string;
 	exitCode: number;
+	rawExitCode?: number;
 	messages: Message[];
 	stderr: string;
 	usage: UsageStats;
 	model?: string;
 	stopReason?: string;
 	errorMessage?: string;
+	sawAssistantMessageEnd?: boolean;
+	sawAssistantTurnEnd?: boolean;
+	sawAgentEnd?: boolean;
 }
 
 /** Metadata attached to every tool result for rendering. */
@@ -68,9 +72,29 @@ export function aggregateUsage(results: SingleResult[]): UsageStats {
 	return total;
 }
 
+/** Whether the child emitted a final assistant text response. */
+export function hasFinalAssistantOutput(r: Pick<SingleResult, "messages">): boolean {
+	return getFinalAssistantText(r.messages).trim().length > 0;
+}
+
+/** Whether the child emitted a lifecycle event that indicates assistant completion. */
+export function hasCompletionSignal(r: SingleResult): boolean {
+	return Boolean(r.sawAgentEnd || r.sawAssistantTurnEnd || r.sawAssistantMessageEnd);
+}
+
+/** Whether a result should be treated as successful by the wrapper/UI. */
+export function isResultSuccess(r: SingleResult): boolean {
+	if (r.exitCode === -1) return false;
+	if (r.exitCode === 0 && r.stopReason !== "error" && r.stopReason !== "aborted") {
+		return true;
+	}
+	return hasFinalAssistantOutput(r) && hasCompletionSignal(r);
+}
+
 /** Whether a result represents an error. */
 export function isResultError(r: SingleResult): boolean {
-	return r.exitCode > 0 || r.stopReason === "error" || r.stopReason === "aborted";
+	if (r.exitCode === -1) return false;
+	return !isResultSuccess(r);
 }
 
 /** Extract the last assistant text from a message history. */
