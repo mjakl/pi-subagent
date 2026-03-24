@@ -17,6 +17,7 @@ import {
 	getDisplayItems,
 	getFinalOutput,
 	isResultError,
+	isResultSuccess,
 } from "./types.js";
 
 const COLLAPSED_LINE_COUNT = 10;
@@ -324,8 +325,8 @@ function renderParallelResult(
 	theme: { fg: ThemeFg; bold: (s: string) => string },
 ): Container | Text {
 	const running = details.results.filter((r) => r.exitCode === -1).length;
-	const successCount = details.results.filter((r) => r.exitCode === 0).length;
-	const failCount = details.results.filter((r) => r.exitCode > 0).length;
+	const successCount = details.results.filter((r) => isResultSuccess(r)).length;
+	const failCount = details.results.filter((r) => isResultError(r)).length;
 	const isRunning = running > 0;
 
 	const icon = isRunning

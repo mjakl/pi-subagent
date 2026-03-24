@@ -26,6 +26,7 @@ import {
   DEFAULT_DELEGATION_MODE,
   emptyUsage,
   isResultError,
+  isResultSuccess,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -797,9 +798,9 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
       if (heartbeat) clearInterval(heartbeat);
     }
 
-    const successCount = results.filter((r) => r.exitCode === 0).length;
+    const successCount = results.filter((r) => isResultSuccess(r)).length;
     const summaries = results.map((r) =>
-      `[${r.agent}] ${r.exitCode === 0 ? "completed" : "failed"}: ${getResultSummaryText(r)}`,
+      `[${r.agent}] ${isResultError(r) ? "failed" : "completed"}: ${getResultSummaryText(r)}`,
     );
 
     return {

@@ -18,10 +18,12 @@ import {
   type SubagentDetails,
   emptyUsage,
   getFinalOutput,
+  normalizeCompletedResult,
 } from "./types.js";
 
 const isWindows = process.platform === "win32";
 const SIGKILL_TIMEOUT_MS = 5000;
+const AGENT_END_GRACE_MS = 250;
 const SUBAGENT_DEPTH_ENV = "PI_SUBAGENT_DEPTH";
 const SUBAGENT_MAX_DEPTH_ENV = "PI_SUBAGENT_MAX_DEPTH";
 const SUBAGENT_STACK_ENV = "PI_SUBAGENT_STACK";
@@ -298,71 +300,112 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
 
       let buffer = "";
       let didClose = false;
+      let settled = false;
+      let abortHandler: (() => void) | undefined;
+      let semanticCompletionTimer: NodeJS.Timeout | undefined;
+
+      const clearSemanticCompletionTimer = () => {
+        if (semanticCompletionTimer) {
+          clearTimeout(semanticCompletionTimer);
+          semanticCompletionTimer = undefined;
+        }
+      };
+
+      const terminateChild = () => {
+        if (isWindows) {
+          if (proc.pid !== undefined) {
+            const killer = spawn("taskkill", ["/T", "/F", "/PID", String(proc.pid)], {
+              stdio: "ignore",
+            });
+            killer.unref();
+          }
+          return;
+        }
+
+        proc.kill("SIGTERM");
+        const sigkillTimer = setTimeout(() => {
+          if (!didClose) proc.kill("SIGKILL");
+        }, SIGKILL_TIMEOUT_MS);
+        sigkillTimer.unref();
+      };
+
+      const finish = (code: number) => {
+        if (settled) return;
+        settled = true;
+        clearSemanticCompletionTimer();
+        if (signal && abortHandler) {
+          signal.removeEventListener("abort", abortHandler);
+        }
+        resolve(code);
+      };
 
       const flushLine = (line: string) => {
         if (processPiJsonLine(line, result)) emitUpdate();
+        maybeFinishFromAgentEnd();
       };
 
-      proc.stdout.on("data", (chunk: Buffer) => {
+      const flushBufferedLines = (text: string) => {
+        for (const line of text.split(/\r?\n/)) {
+          if (line.trim()) flushLine(line);
+        }
+      };
+
+      const maybeFinishFromAgentEnd = () => {
+        if (!result.sawAgentEnd || didClose || settled) return;
+        clearSemanticCompletionTimer();
+        semanticCompletionTimer = setTimeout(() => {
+          if (didClose || settled || !result.sawAgentEnd) return;
+          if (buffer.trim()) {
+            flushBufferedLines(buffer);
+            buffer = "";
+          }
+          proc.stdout.removeListener("data", onStdoutData);
+          proc.stderr.removeListener("data", onStderrData);
+          finish(0);
+          terminateChild();
+        }, AGENT_END_GRACE_MS);
+        semanticCompletionTimer.unref();
+      };
+
+      const onStdoutData = (chunk: Buffer) => {
         buffer += chunk.toString();
         const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() || "";
         for (const line of lines) flushLine(line);
-      });
+      };
 
-      proc.stderr.on("data", (chunk: Buffer) => {
+      const onStderrData = (chunk: Buffer) => {
         result.stderr += chunk.toString();
-      });
+      };
+
+      proc.stdout.on("data", onStdoutData);
+      proc.stderr.on("data", onStderrData);
 
       proc.on("close", (code) => {
         didClose = true;
-        if (buffer.trim()) flushLine(buffer);
-        resolve(code ?? 0);
+        if (buffer.trim()) flushBufferedLines(buffer);
+        finish(code ?? 0);
       });
 
       proc.on("error", (err) => {
         if (!result.stderr.trim()) result.stderr = err.message;
-        resolve(1);
+        finish(1);
       });
 
       // Abort handling
       if (signal) {
-        const kill = () => {
+        abortHandler = () => {
+          if (didClose || settled) return;
           wasAborted = true;
-          if (isWindows) {
-            if (proc.pid !== undefined) {
-              const killer = spawn("taskkill", ["/T", "/F", "/PID", String(proc.pid)], {
-                stdio: "ignore",
-              });
-              killer.unref();
-            }
-            return;
-          }
-
-          proc.kill("SIGTERM");
-          const sigkillTimer = setTimeout(() => {
-            if (!didClose) proc.kill("SIGKILL");
-          }, SIGKILL_TIMEOUT_MS);
-          sigkillTimer.unref();
+          terminateChild();
         };
-        if (signal.aborted) kill();
-        else signal.addEventListener("abort", kill, { once: true });
+        if (signal.aborted) abortHandler();
+        else signal.addEventListener("abort", abortHandler, { once: true });
       }
     });
 
     result.exitCode = exitCode;
-    if (wasAborted) {
-      result.exitCode = 130;
-      result.stopReason = "aborted";
-      result.errorMessage = "Subagent was aborted.";
-      if (!result.stderr.trim()) result.stderr = "Subagent was aborted.";
-    } else if (result.exitCode > 0) {
-      if (!result.stopReason) result.stopReason = "error";
-      if (!result.errorMessage && result.stderr.trim()) {
-        result.errorMessage = result.stderr.trim();
-      }
-    }
-    return result;
+    return normalizeCompletedResult(result, wasAborted);
   } finally {
     cleanupTempDir(promptTmpDir);
     cleanupTempDir(forkSessionTmpDir);
