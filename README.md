@@ -72,6 +72,10 @@ Internal env vars managed by the extension and propagated to child processes:
 - `PI_SUBAGENT_STACK` (JSON array of ancestor agent names, e.g. `["scout","planner"]`)
 - `PI_SUBAGENT_PREVENT_CYCLES`
 
+Recommended extension-integration note:
+
+If another extension needs to detect whether it is running inside a delegated subagent process, check `PI_SUBAGENT_DEPTH`. Treat `PI_SUBAGENT_DEPTH > 0` as "this pi process is a subagent". This is the recommended way to suppress parent-only behavior such as bells, desktop notifications, or other attention-grabbing signals.
+
 Examples:
 
 ```bash
