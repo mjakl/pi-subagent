@@ -14,8 +14,12 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
-import { type AgentConfig, discoverAgents } from "./agents.js";
+import { Type } from "typebox";
+import {
+  type AgentConfig,
+  discoverAgents,
+  normalizeInlineAgentDefinition,
+} from "./agents.js";
 import { renderCall, renderResult } from "./render.js";
 import { getResultSummaryText } from "./runner-events.js";
 import { mapConcurrent, runAgent } from "./runner.js";
@@ -47,10 +51,32 @@ const SUBAGENT_PREVENT_CYCLES_ENV = "PI_SUBAGENT_PREVENT_CYCLES";
 // Tool parameter schema
 // ---------------------------------------------------------------------------
 
-const TaskItem = Type.Object({
-  agent: Type.String({
-    description: "Name of an available agent (must match exactly)",
+const InlineAgentDefinitionSchema = Type.Object({
+  name: Type.String({
+    description: "Ephemeral inline agent name for this call.",
   }),
+  description: Type.String({
+    description: "What this inline agent does.",
+  }),
+  model: Type.Optional(Type.String({ description: "Optional model override." })),
+  thinking: Type.Optional(Type.String({ description: "Optional thinking override." })),
+  tools: Type.Optional(
+    Type.Array(Type.String(), {
+      description: "Optional built-in tools enabled for this inline agent.",
+    }),
+  ),
+  systemPrompt: Type.Optional(
+    Type.String({ description: "Optional appended system prompt for this inline agent." }),
+  ),
+});
+
+const TaskItem = Type.Object({
+  agent: Type.Optional(
+    Type.String({
+      description: "Name of an available agent (must match exactly)",
+    }),
+  ),
+  agentDefinition: Type.Optional(InlineAgentDefinitionSchema),
   task: Type.String({
     description:
       "Task description for this delegated run. In spawn mode include all required context; in fork mode the subagent also sees your current session context.",
@@ -67,6 +93,7 @@ const SubagentParams = Type.Object({
         "Agent name for single mode. Must match an available agent name exactly.",
     }),
   ),
+  agentDefinition: Type.Optional(InlineAgentDefinitionSchema),
   task: Type.Optional(
     Type.String({
       description:
@@ -433,9 +460,14 @@ Context behavior is controlled by optional 'mode':
 { "agent": "agent-name", "task": "Detailed task...", "mode": "spawn" }
 \`\`\`
 
-**Parallel mode** — run multiple tasks concurrently (do NOT also set agent/task):
+Or use an ephemeral inline definition:
 \`\`\`json
-{ "tasks": [{ "agent": "agent-name", "task": "..." }, { "agent": "other-agent", "task": "..." }], "mode": "fork" }
+{ "agentDefinition": { "name": "reviewer", "description": "Reviews code", "systemPrompt": "Optional appended prompt" }, "task": "Detailed task...", "mode": "spawn" }
+\`\`\`
+
+**Parallel mode** — run multiple tasks concurrently (do NOT also set top-level agent/task/agentDefinition):
+\`\`\`json
+{ "tasks": [{ "agent": "agent-name", "task": "..." }, { "agentDefinition": { "name": "reviewer", "description": "Reviews code" }, "task": "..." }], "mode": "fork" }
 \`\`\`
 
 Use single mode for one task, parallel mode when tasks are independent and can run simultaneously.
@@ -458,8 +490,8 @@ Use single mode for one task, parallel mode when tasks are independent and can r
         "Delegate work to specialized subagents running in isolated pi processes.",
         "",
         "IMPORTANT: Use exactly ONE invocation shape:",
-        "  Single mode:   set `agent` and `task` (both required together).",
-        "  Parallel mode: set `tasks` array (do NOT also set `agent`/`task`).",
+        "  Single mode:   set either `agent` or `agentDefinition`, plus `task`.",
+        "  Parallel mode: set `tasks` array (do NOT also set top-level `agent`, `agentDefinition`, or `task`).",
         "",
         "Optional context mode switch:",
         "  mode: \"spawn\" (default) -> child gets only your task prompt.",
@@ -468,7 +500,8 @@ Use single mode for one task, parallel mode when tasks are independent and can r
         "                             Best for follow-up work that depends on prior context; higher token/cost and may include sensitive context.",
         "",
         'Example single:   { agent: "writer", task: "Rewrite README.md", mode: "spawn" }',
-        'Example parallel: { tasks: [{ agent: "writer", task: "..." }, { agent: "tester", task: "..." }], mode: "fork" }',
+        'Example inline:   { agentDefinition: { name: "reviewer", description: "Reviews code", systemPrompt: "Optional appended prompt" }, task: "Review this diff", mode: "spawn" }',
+        'Example parallel: { tasks: [{ agent: "writer", task: "..." }, { agentDefinition: { name: "reviewer", description: "Reviews code" }, task: "..." }], mode: "fork" }',
       ].join("\n"),
       parameters: SubagentParams,
 
@@ -518,10 +551,33 @@ Use single mode for one task, parallel mode when tasks are independent and can r
           }
         }
 
+        let inlineSingleAgent: AgentConfig | null = null;
+        if (params.agentDefinition !== undefined) {
+          try {
+            inlineSingleAgent = normalizeInlineAgentDefinition(
+              params.agentDefinition,
+            );
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return {
+              content: [{ type: "text", text: message }],
+              details: makeDetails("single")([]),
+              isError: true,
+            };
+          }
+        }
+
         // Validate: exactly one invocation shape must be specified
         const hasTasks = (params.tasks?.length ?? 0) > 0;
-        const hasSingle = Boolean(params.agent && params.task);
-        if (Number(hasTasks) + Number(hasSingle) !== 1) {
+        const hasSingle = Boolean(params.task && (params.agent || inlineSingleAgent));
+        const hasTopLevelSingleFields = Boolean(
+          params.agent || params.agentDefinition || params.task || params.cwd,
+        );
+        if (
+          Number(hasTasks) + Number(hasSingle) !== 1 ||
+          (params.agent && inlineSingleAgent) ||
+          (hasTasks && hasTopLevelSingleFields)
+        ) {
           return {
             content: [
               {
@@ -530,17 +586,75 @@ Use single mode for one task, parallel mode when tasks are independent and can r
               },
             ],
             details: makeDetails("single")([]),
+            isError: true,
           };
         }
 
+        const inlineParallelAgents: AgentConfig[] = [];
+        const resolvedParallelTasks = [];
+        if (params.tasks) {
+          for (const [index, taskItem] of params.tasks.entries()) {
+            let inlineTaskAgent: AgentConfig | null = null;
+            if (taskItem.agentDefinition !== undefined) {
+              try {
+                inlineTaskAgent = normalizeInlineAgentDefinition(
+                  taskItem.agentDefinition,
+                );
+              } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                return {
+                  content: [{ type: "text", text: `Invalid task[${index}]. ${message}` }],
+                  details: makeDetails("parallel")([]),
+                  isError: true,
+                };
+              }
+            }
+
+            if (!taskItem.task || (!taskItem.agent && !inlineTaskAgent) || (taskItem.agent && inlineTaskAgent)) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Invalid task[${index}]. Provide exactly one of "agent" or "agentDefinition".`,
+                  },
+                ],
+                details: makeDetails("parallel")([]),
+                isError: true,
+              };
+            }
+
+            if (inlineTaskAgent) inlineParallelAgents.push(inlineTaskAgent);
+            resolvedParallelTasks.push({
+              agent: taskItem.agent ?? inlineTaskAgent.name,
+              task: taskItem.task,
+              cwd: taskItem.cwd,
+              named: !inlineTaskAgent,
+            });
+          }
+        }
+
+        const agentsForCall = [
+          ...(inlineSingleAgent ? [inlineSingleAgent] : []),
+          ...inlineParallelAgents,
+          ...agents,
+        ];
+
         // Security: guard project-local agents before running
-        const requested = new Set<string>();
-        if (params.tasks) for (const t of params.tasks) requested.add(t.agent);
-        if (params.agent) requested.add(params.agent);
+        const cycleRequested = new Set<string>();
+        const namedRequested = new Set<string>();
+        for (const taskItem of resolvedParallelTasks) {
+          cycleRequested.add(taskItem.agent);
+          if (taskItem.named) namedRequested.add(taskItem.agent);
+        }
+        if (params.agent) {
+          cycleRequested.add(params.agent);
+          namedRequested.add(params.agent);
+        }
+        if (inlineSingleAgent) cycleRequested.add(inlineSingleAgent.name);
 
         if (preventCycles) {
           const cycleViolations = getCycleViolations(
-            requested,
+            cycleRequested,
             ancestorAgentStack,
           );
           if (cycleViolations.length > 0) {
@@ -566,7 +680,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
 
         const requestedProjectAgents = getRequestedProjectAgents(
           agents,
-          requested,
+          namedRequested,
         );
         const shouldConfirmProjectAgents = params.confirmProjectAgents ?? true;
         if (requestedProjectAgents.length > 0 && shouldConfirmProjectAgents) {
@@ -604,12 +718,12 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
         }
 
         // ── Parallel mode ──
-        if (params.tasks && params.tasks.length > 0) {
+        if (resolvedParallelTasks.length > 0) {
           return executeParallel(
-            params.tasks,
+            resolvedParallelTasks,
             delegationMode,
             forkSessionSnapshotJsonl,
-            agents,
+            agentsForCall,
             ctx.cwd,
             signal,
             onUpdate,
@@ -618,14 +732,14 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
         }
 
         // ── Single mode ──
-        if (params.agent && params.task) {
+        if (params.task && (params.agent || inlineSingleAgent)) {
           return executeSingle(
-            params.agent,
+            params.agent ?? inlineSingleAgent!.name,
             params.task,
             params.cwd,
             delegationMode,
             forkSessionSnapshotJsonl,
-            agents,
+            agentsForCall,
             ctx.cwd,
             signal,
             onUpdate,
@@ -641,6 +755,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
             },
           ],
           details: makeDetails("single")([]),
+          isError: true,
         };
       },
 
@@ -725,6 +840,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
           },
         ],
         details: makeDetails("parallel")([]),
+        isError: true,
       };
     }
 
