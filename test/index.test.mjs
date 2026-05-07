@@ -35,8 +35,14 @@ function createTestableIndexModule() {
           source: "user",
           filePath: "/tmp/writer.md",
           systemPrompt: "You are writer.",
+        }, {
+          name: "reviewer",
+          description: "Project reviewer agent",
+          source: "project",
+          filePath: "/tmp/project-reviewer.md",
+          systemPrompt: "You are project reviewer.",
         }],
-        projectAgentsDir: null,
+        projectAgentsDir: "/tmp/.pi/agents",
       };
     }
 
@@ -392,6 +398,141 @@ test("parallel inline task item keeps per-task cwd", () => {
 
     assert.equal(result.isError, undefined);
     assert.match(result.content[0].text, /\/tmp\/review/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("inline single-mode agent is not blocked by project-agent confirmation when names collide", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const result = runSubagentTool(moduleUrl, {
+      agentDefinition: {
+        name: "reviewer",
+        description: "Reviews code",
+      },
+      task: "Review commits A..B",
+    });
+
+    assert.equal(result.isError, undefined);
+    assert.equal(result.content[0].text, "inline success reviewer inline");
+  } finally {
+    cleanup();
+  }
+});
+
+test("same-name discovered agents do not override inline definitions", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const result = runSubagentTool(moduleUrl, {
+      tasks: [
+        {
+          agentDefinition: {
+            name: "reviewer",
+            description: "Reviews code",
+          },
+          task: "Review commits A..B",
+          confirmProjectAgents: false,
+        },
+      ],
+      confirmProjectAgents: false,
+    });
+
+    assert.equal(result.isError, undefined);
+    assert.match(result.content[0].text, /inline success reviewer inline/);
+    assert.doesNotMatch(result.content[0].text, /inline success reviewer project/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("cycle prevention applies to inline agent names", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const result = JSON.parse(
+      execFileSync(
+        "node",
+        [
+          "--experimental-strip-types",
+          "--input-type=module",
+          "-e",
+          `
+            import extension from ${JSON.stringify(moduleUrl)};
+
+            let tool;
+            const pi = {
+              registerFlag() {},
+              on() {},
+              registerTool(def) { tool = def; },
+              getFlag() { return undefined; },
+            };
+
+            extension(pi);
+
+            const result = await tool.execute(
+              "tool-call-1",
+              {
+                agentDefinition: {
+                  name: "reviewer",
+                  description: "Reviews code",
+                },
+                task: "Review commits A..B",
+              },
+              undefined,
+              undefined,
+              {
+                cwd: process.cwd(),
+                hasUI: false,
+                sessionManager: {
+                  getHeader() { return { version: 1 }; },
+                  getBranch() { return []; },
+                },
+              },
+            );
+
+            process.stdout.write(JSON.stringify(result));
+          `,
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PI_SUBAGENT_STACK: JSON.stringify(["reviewer"]),
+            PI_SUBAGENT_PREVENT_CYCLES: "1",
+          },
+        },
+      ),
+    );
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /cycle detected|delegation cycle/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("top-level tasks remain exclusive with top-level agentDefinition", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const result = runSubagentTool(moduleUrl, {
+      agentDefinition: {
+        name: "reviewer",
+        description: "Reviews code",
+      },
+      tasks: [
+        {
+          agent: "writer",
+          task: "Draft notes",
+        },
+      ],
+    });
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /exactly one invocation shape|agentDefinition/);
   } finally {
     cleanup();
   }

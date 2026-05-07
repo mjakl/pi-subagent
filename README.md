@@ -116,6 +116,72 @@ Examples:
 
 If omitted, mode defaults to `spawn`.
 
+### Inline Agent Definitions (Ephemeral)
+
+In addition to named agents discovered from files, `subagent` also supports **ephemeral inline agent definitions** passed directly in the tool input.
+
+This is useful when the caller already has a fully composed prompt in memory, for example after reading a superpowers skill template and filling its placeholders.
+
+Single-mode inline example:
+
+```json
+{
+  "agentDefinition": {
+    "name": "code-reviewer",
+    "description": "Reviews code changes for production readiness",
+    "tools": ["read", "bash"],
+    "systemPrompt": "Review the diff carefully and categorize findings by severity."
+  },
+  "task": "Review commits A..B",
+  "mode": "spawn"
+}
+```
+
+Minimal inline example without a custom prompt:
+
+```json
+{
+  "agentDefinition": {
+    "name": "code-reviewer",
+    "description": "Reviews code changes for production readiness",
+    "tools": ["read", "bash"]
+  },
+  "task": "Review commits A..B"
+}
+```
+
+Notes:
+
+- Inline agent definitions are **ephemeral only** and are **not** written to disk.
+- `systemPrompt` is optional. If omitted, the child uses Pi's default system prompt plus the delegated task and any runtime overrides.
+- For the inline API, `tools` must be a string array.
+- The caller is responsible for resolving skills, templates, or external prompt content before calling `subagent`.
+- Inline agents do not appear in the globally discovered subagent list.
+
+Parallel mode also supports inline definitions per task item:
+
+```json
+{
+  "tasks": [
+    {
+      "agentDefinition": {
+        "name": "code-reviewer",
+        "description": "Reviews code changes",
+        "tools": ["read", "bash"]
+      },
+      "task": "Review commits A..B"
+    },
+    {
+      "agent": "writer",
+      "task": "Draft release notes"
+    }
+  ],
+  "mode": "spawn"
+}
+```
+
+Exactly one of `agent` or `agentDefinition` must be used for a single-mode call, and exactly one of them must be used per task item in parallel mode.
+
 ### Subagent Definitions
 
 Subagents are defined as Markdown files with YAML frontmatter.
