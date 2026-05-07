@@ -530,6 +530,7 @@ Use single mode for one task, parallel mode when tasks are independent and can r
               },
             ],
             details: makeDetails("single")([]),
+            isError: true,
           };
         }
 
@@ -641,6 +642,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
             },
           ],
           details: makeDetails("single")([]),
+          isError: true,
         };
       },
 
@@ -725,6 +727,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
           },
         ],
         details: makeDetails("parallel")([]),
+        isError: true,
       };
     }
 
