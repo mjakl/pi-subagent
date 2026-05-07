@@ -24,8 +24,17 @@ export interface AgentConfig {
 	model?: string;
 	thinking?: string;
 	systemPrompt: string;
-	source: "user" | "project";
+	source: "user" | "project" | "inline";
 	filePath: string;
+}
+
+export interface InlineAgentDefinition {
+	name: string;
+	description: string;
+	tools?: string[];
+	model?: string;
+	thinking?: string;
+	systemPrompt?: string;
 }
 
 export interface AgentDiscoveryResult {
@@ -135,6 +144,42 @@ function mergeAgents(...groups: AgentConfig[][]): AgentConfig[] {
 		for (const agent of group) agentMap.set(agent.name, agent);
 	}
 	return Array.from(agentMap.values());
+}
+
+function normalizeRequiredString(value: unknown, fieldName: string): string {
+	if (typeof value !== "string" || !value.trim()) {
+		throw new Error(`Invalid agentDefinition.${fieldName}: expected non-empty string.`);
+	}
+	return value.trim();
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const trimmed = value.trim();
+	return trimmed || undefined;
+}
+
+function normalizeInlineTools(value: unknown): string[] | undefined {
+	if (value === undefined) return undefined;
+	if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+		throw new Error("Invalid agentDefinition.tools: expected string array.");
+	}
+
+	const tools = value.map((entry) => entry.trim()).filter(Boolean);
+	return tools.length > 0 ? tools : undefined;
+}
+
+export function normalizeInlineAgentDefinition(definition: InlineAgentDefinition): AgentConfig {
+	return {
+		name: normalizeRequiredString(definition.name, "name"),
+		description: normalizeRequiredString(definition.description, "description"),
+		tools: normalizeInlineTools(definition.tools),
+		model: normalizeOptionalString(definition.model),
+		thinking: normalizeOptionalString(definition.thinking),
+		systemPrompt: normalizeOptionalString(definition.systemPrompt) ?? "",
+		source: "inline",
+		filePath: "(inline agent definition)",
+	};
 }
 
 // ---------------------------------------------------------------------------
