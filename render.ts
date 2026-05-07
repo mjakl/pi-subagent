@@ -164,14 +164,15 @@ export function renderCall(args: Record<string, any>, theme: { fg: ThemeFg; bold
 			theme.fg("accent", `parallel (${args.tasks.length} tasks)`) +
 			modeBadge;
 		for (const t of args.tasks.slice(0, 3)) {
-			text += `\n  ${theme.fg("accent", t.agent)}${theme.fg("dim", ` ${truncate(t.task, 40)}`)}`;
+			const agentName = t.agent || t.agentDefinition?.name || "...";
+			text += `\n  ${theme.fg("accent", agentName)}${theme.fg("dim", ` ${truncate(t.task, 40)}`)}`;
 		}
 		if (args.tasks.length > 3) text += `\n  ${theme.fg("muted", `... +${args.tasks.length - 3} more`)}`;
 		return new Text(text, 0, 0);
 	}
 
 	// Single mode
-	const agentName = args.agent || "...";
+	const agentName = args.agent || args.agentDefinition?.name || "...";
 	const preview = args.task ? truncate(args.task, 60) : "...";
 	let text =
 		theme.fg("toolTitle", theme.bold("subagent ")) +

@@ -103,7 +103,7 @@ const SubagentParams = Type.Object({
   tasks: Type.Optional(
     Type.Array(TaskItem, {
       description:
-        "For parallel mode: array of {agent, task} objects. Each task runs in an isolated process concurrently. Do NOT set agent/task when using this.",
+        "For parallel mode: array of task objects. Each task must set exactly one of `agent` or `agentDefinition`, plus `task`. Each task runs in an isolated process concurrently. Do NOT also set top-level agent/agentDefinition/task when using this.",
     }),
   ),
   mode: Type.Optional(
@@ -499,7 +499,7 @@ Use single mode for one task, parallel mode when tasks are independent and can r
         "",
         "IMPORTANT: Use exactly ONE invocation shape:",
         "  Single mode:   set either `agent` or `agentDefinition`, plus `task`.",
-        "  Parallel mode: set `tasks` array (do NOT also set top-level `agent`, `agentDefinition`, or `task`).",
+        "  Parallel mode: set `tasks` array; each item must include exactly one of `agent` or `agentDefinition`, plus `task` (do NOT also set top-level `agent`, `agentDefinition`, or `task`).",
         "",
         "Optional context mode switch:",
         "  mode: \"spawn\" (default) -> child gets only your task prompt.",

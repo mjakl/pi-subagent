@@ -179,6 +179,102 @@ function runSubagentTool(moduleUrl, params) {
   );
 }
 
+function inspectSubagentTool(moduleUrl) {
+  const script = `
+    import extension from ${JSON.stringify(moduleUrl)};
+
+    let tool;
+    const pi = {
+      registerFlag() {},
+      on() {},
+      registerTool(def) { tool = def; },
+      getFlag() { return undefined; },
+    };
+
+    extension(pi);
+    process.stdout.write(JSON.stringify({
+      description: tool.description,
+      tasksDescription: tool.parameters.shape.tasks.description,
+    }));
+  `;
+
+  return JSON.parse(
+    execFileSync(
+      "node",
+      ["--experimental-strip-types", "--input-type=module", "-e", script],
+      { encoding: "utf8" },
+    ),
+  );
+}
+
+function createTestableRenderModule() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-render-"));
+  const modulePath = path.join(tmpDir, "render.testable.ts");
+  const sourcePath = path.join(process.cwd(), "render.ts");
+
+  fs.writeFileSync(
+    path.join(tmpDir, "pi-coding-agent-stub.mjs"),
+    "export function getMarkdownTheme() { return {}; }\n",
+  );
+  fs.writeFileSync(
+    path.join(tmpDir, "pi-tui-stub.mjs"),
+    `export class Container { addChild() {} }
+     export class Markdown { constructor(text) { this.text = text; } }
+     export class Spacer { constructor(size) { this.size = size; } }
+     export class Text { constructor(text) { this.text = text; } }\n`,
+  );
+  fs.writeFileSync(
+    path.join(tmpDir, "runner-events.js"),
+    "export function getResultSummaryText() { return \"(no output)\"; }\n",
+  );
+  fs.writeFileSync(
+    path.join(tmpDir, "types.js"),
+    `export const DEFAULT_DELEGATION_MODE = "spawn";
+     export function aggregateUsage() { return {}; }
+     export function getDisplayItems() { return []; }
+     export function getFinalOutput() { return ""; }
+     export function isResultError() { return false; }
+     export function isResultSuccess() { return true; }\n`,
+  );
+
+  const source = fs
+    .readFileSync(sourcePath, "utf-8")
+    .replace(
+      'from "@mariozechner/pi-coding-agent"',
+      'from "./pi-coding-agent-stub.mjs"',
+    )
+    .replace('from "@mariozechner/pi-tui"', 'from "./pi-tui-stub.mjs"');
+
+  fs.writeFileSync(modulePath, source);
+
+  return {
+    moduleUrl: pathToFileURL(modulePath).href,
+    cleanup: () => fs.rmSync(tmpDir, { recursive: true, force: true }),
+  };
+}
+
+function renderCallPreview(moduleUrl, args) {
+  const script = `
+    import { renderCall } from ${JSON.stringify(moduleUrl)};
+
+    const theme = {
+      fg(_color, text) { return text; },
+      bold(text) { return text; },
+    };
+
+    const rendered = renderCall(${JSON.stringify(args)}, theme);
+    process.stdout.write(JSON.stringify(rendered.text));
+  `;
+
+  return JSON.parse(
+    execFileSync(
+      "node",
+      ["--experimental-strip-types", "--input-type=module", "-e", script],
+      { encoding: "utf8" },
+    ),
+  );
+}
+
 test("invalid invocation shape returns isError true", () => {
   const { moduleUrl, cleanup } = createTestableIndexModule();
 
@@ -608,6 +704,51 @@ test("top-level tasks remain exclusive with top-level agentDefinition", () => {
 
     assert.equal(result.isError, true);
     assert.match(result.content[0].text, /exactly one invocation shape|agentDefinition/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("parallel task schema mentions agentDefinition", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const tool = inspectSubagentTool(moduleUrl);
+
+    assert.match(tool.tasksDescription, /agentDefinition/);
+    assert.match(tool.description, /Example parallel: .*agentDefinition/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("renderCall previews inline agentDefinition names", () => {
+  const { moduleUrl, cleanup } = createTestableRenderModule();
+
+  try {
+    const singlePreview = renderCallPreview(moduleUrl, {
+      agentDefinition: {
+        name: "reviewer",
+        description: "Reviews code",
+      },
+      task: "Review this diff",
+    });
+    const parallelPreview = renderCallPreview(moduleUrl, {
+      tasks: [
+        {
+          agentDefinition: {
+            name: "reviewer",
+            description: "Reviews code",
+          },
+          task: "Review this diff",
+        },
+      ],
+    });
+
+    assert.match(singlePreview, /subagent reviewer \[spawn\]/);
+    assert.match(parallelPreview, /\n  reviewer Review this diff/);
+    assert.doesNotMatch(singlePreview, /subagent \.\.\. \[spawn\]/);
+    assert.doesNotMatch(parallelPreview, /undefined/);
   } finally {
     cleanup();
   }

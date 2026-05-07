@@ -157,6 +157,7 @@ Notes:
 - For the inline API, `tools` must be a string array.
 - The caller is responsible for resolving skills, templates, or external prompt content before calling `subagent`.
 - Inline agents do not appear in the globally discovered subagent list.
+- Inline task definitions are resolved per task, so same-name inline and named tasks in one call keep their own configs.
 
 Parallel mode also supports inline definitions per task item:
 
