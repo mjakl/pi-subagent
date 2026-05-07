@@ -110,3 +110,19 @@ test("stderr remains a fallback only for error results", () => {
   failedResult.stderr = "warning on stderr";
   assert.equal(getResultSummaryText(failedResult), "warning on stderr");
 });
+
+test("combines all text parts from the final assistant message", () => {
+  const result = makeResult();
+  result.messages.push({
+    role: "assistant",
+    content: [
+      { type: "text", text: "Part 1. " },
+      { type: "toolCall", name: "read", arguments: { path: "README.md" } },
+      { type: "text", text: "Part 2." },
+    ],
+    timestamp: 1,
+  });
+
+  assert.equal(getFinalAssistantText(result.messages), "Part 1. Part 2.");
+  assert.equal(getResultSummaryText(result), "Part 1. Part 2.");
+});
