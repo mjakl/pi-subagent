@@ -98,7 +98,7 @@ function createTestableIndexModule() {
         task: opts.task,
         exitCode: 0,
         messages: [],
-        stderr: "inline success " + selectedAgent.name + " " + selectedAgent.source,
+        stderr: "inline success " + selectedAgent.name + " " + selectedAgent.source + (opts.taskCwd ? " " + opts.taskCwd : ""),
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
       };
     }
@@ -274,6 +274,124 @@ test("single-mode invalid inline agent definition returns isError true", () => {
 
     assert.equal(result.isError, true);
     assert.match(result.content[0].text, /agentDefinition\.name|Invalid agentDefinition/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("parallel inline agent definition is accepted", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const result = runSubagentTool(moduleUrl, {
+      tasks: [
+        {
+          agentDefinition: {
+            name: "reviewer",
+            description: "Reviews code",
+          },
+          task: "Review commits A..B",
+        },
+      ],
+    });
+
+    assert.equal(result.isError, undefined);
+    assert.match(result.content[0].text, /inline success reviewer inline/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("parallel mixed named and inline agents are accepted", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const result = runSubagentTool(moduleUrl, {
+      tasks: [
+        {
+          agent: "writer",
+          task: "Draft notes",
+        },
+        {
+          agentDefinition: {
+            name: "reviewer",
+            description: "Reviews code",
+          },
+          task: "Review commits A..B",
+        },
+      ],
+    });
+
+    assert.equal(result.isError, undefined);
+    assert.match(result.content[0].text, /inline success writer user/);
+    assert.match(result.content[0].text, /inline success reviewer inline/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("parallel task item with both agent and agentDefinition is rejected", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const result = runSubagentTool(moduleUrl, {
+      tasks: [
+        {
+          agent: "writer",
+          agentDefinition: {
+            name: "reviewer",
+            description: "Reviews code",
+          },
+          task: "Review commits A..B",
+        },
+      ],
+    });
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /task\[0\]|agentDefinition|Invalid parameters/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("parallel task item with neither agent nor agentDefinition is rejected", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const result = runSubagentTool(moduleUrl, {
+      tasks: [
+        {
+          task: "Review commits A..B",
+        },
+      ],
+    });
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /task\[0\]|Invalid parameters/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("parallel inline task item keeps per-task cwd", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const result = runSubagentTool(moduleUrl, {
+      tasks: [
+        {
+          agentDefinition: {
+            name: "reviewer",
+            description: "Reviews code",
+          },
+          task: "Review commits A..B",
+          cwd: "/tmp/review",
+        },
+      ],
+    });
+
+    assert.equal(result.isError, undefined);
+    assert.match(result.content[0].text, /\/tmp\/review/);
   } finally {
     cleanup();
   }

@@ -564,7 +564,10 @@ Use single mode for one task, parallel mode when tasks are independent and can r
         // Validate: exactly one invocation shape must be specified
         const hasTasks = (params.tasks?.length ?? 0) > 0;
         const hasSingle = Boolean(params.task && (params.agent || inlineSingleAgent));
-        if (Number(hasTasks) + Number(hasSingle) !== 1 || (params.agent && inlineSingleAgent)) {
+        if (
+          Number(hasTasks) + Number(hasSingle) !== 1 ||
+          (params.agent && inlineSingleAgent)
+        ) {
           return {
             content: [
               {
@@ -577,15 +580,57 @@ Use single mode for one task, parallel mode when tasks are independent and can r
           };
         }
 
-        const agentsForCall = inlineSingleAgent ? [...agents, inlineSingleAgent] : agents;
+        const inlineParallelAgents: AgentConfig[] = [];
+        const resolvedParallelTasks = [];
+        if (params.tasks) {
+          for (const [index, taskItem] of params.tasks.entries()) {
+            let inlineTaskAgent: AgentConfig | null = null;
+            if (taskItem.agentDefinition !== undefined) {
+              try {
+                inlineTaskAgent = normalizeInlineAgentDefinition(
+                  taskItem.agentDefinition,
+                );
+              } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                return {
+                  content: [{ type: "text", text: `Invalid task[${index}]. ${message}` }],
+                  details: makeDetails("parallel")([]),
+                  isError: true,
+                };
+              }
+            }
+
+            if (!taskItem.task || (!taskItem.agent && !inlineTaskAgent) || (taskItem.agent && inlineTaskAgent)) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Invalid task[${index}]. Provide exactly one of "agent" or "agentDefinition".`,
+                  },
+                ],
+                details: makeDetails("parallel")([]),
+                isError: true,
+              };
+            }
+
+            if (inlineTaskAgent) inlineParallelAgents.push(inlineTaskAgent);
+            resolvedParallelTasks.push({
+              agent: taskItem.agent ?? inlineTaskAgent.name,
+              task: taskItem.task,
+              cwd: taskItem.cwd,
+            });
+          }
+        }
+
+        const agentsForCall = [
+          ...agents,
+          ...(inlineSingleAgent ? [inlineSingleAgent] : []),
+          ...inlineParallelAgents,
+        ];
 
         // Security: guard project-local agents before running
         const requested = new Set<string>();
-        if (params.tasks) {
-          for (const t of params.tasks) {
-            if (t.agent) requested.add(t.agent);
-          }
-        }
+        for (const taskItem of resolvedParallelTasks) requested.add(taskItem.agent);
         if (params.agent) requested.add(params.agent);
         if (inlineSingleAgent) requested.add(inlineSingleAgent.name);
 
@@ -655,9 +700,9 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
         }
 
         // ── Parallel mode ──
-        if (params.tasks && params.tasks.length > 0) {
+        if (resolvedParallelTasks.length > 0) {
           return executeParallel(
-            params.tasks,
+            resolvedParallelTasks,
             delegationMode,
             forkSessionSnapshotJsonl,
             agentsForCall,
