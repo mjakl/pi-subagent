@@ -38,6 +38,29 @@ function createTestableIndexModule() {
         }],
         projectAgentsDir: null,
       };
+    }
+
+    export function normalizeInlineAgentDefinition(definition) {
+      const name = typeof definition?.name === "string" ? definition.name.trim() : "";
+      const description = typeof definition?.description === "string" ? definition.description.trim() : "";
+      if (!name) throw new Error("Invalid agentDefinition.name: expected non-empty string.");
+      if (!description) throw new Error("Invalid agentDefinition.description: expected non-empty string.");
+
+      const tools = definition?.tools;
+      if (tools !== undefined && (!Array.isArray(tools) || tools.some((tool) => typeof tool !== "string"))) {
+        throw new Error("Invalid agentDefinition.tools: expected string array.");
+      }
+
+      return {
+        name,
+        description,
+        model: typeof definition?.model === "string" ? definition.model.trim() || undefined : undefined,
+        thinking: typeof definition?.thinking === "string" ? definition.thinking.trim() || undefined : undefined,
+        tools: Array.isArray(tools) ? tools.map((tool) => tool.trim()).filter(Boolean) : undefined,
+        systemPrompt: typeof definition?.systemPrompt === "string" ? definition.systemPrompt.trim() : "",
+        source: "inline",
+        filePath: "(inline agent definition)",
+      };
     }\n`,
   );
   fs.writeFileSync(
@@ -48,13 +71,36 @@ function createTestableIndexModule() {
   fs.writeFileSync(
     path.join(tmpDir, "runner-events.js"),
     `export function getResultSummaryText(result) {
-      return result?.errorMessage || result?.stderr || "(no output)";
+      return result?.stderr || result?.errorMessage || "(no output)";
     }\n`,
   );
   fs.writeFileSync(
     path.join(tmpDir, "runner.js"),
-    `export async function runAgent() {
-      throw new Error("runAgent should not be called in invalid-parameter tests");
+    `export async function runAgent(opts) {
+      const selectedAgent = opts.agents.find((agent) => agent.name === opts.agentName);
+      if (!selectedAgent) {
+        return {
+          agent: opts.agentName,
+          agentSource: "unknown",
+          task: opts.task,
+          exitCode: 1,
+          messages: [],
+          stderr: "unknown agent",
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+          stopReason: "error",
+          errorMessage: "unknown agent",
+        };
+      }
+
+      return {
+        agent: selectedAgent.name,
+        agentSource: selectedAgent.source,
+        task: opts.task,
+        exitCode: 0,
+        messages: [],
+        stderr: "inline success " + selectedAgent.name + " " + selectedAgent.source,
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+      };
     }
     export async function mapConcurrent(items, _concurrency, fn) {
       return Promise.all(items.map(fn));
@@ -150,6 +196,84 @@ test("too many parallel tasks returns isError true", () => {
 
     assert.equal(result.isError, true);
     assert.match(result.content[0].text, /Too many parallel tasks/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("single-mode inline agent definition is accepted", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const result = runSubagentTool(moduleUrl, {
+      agentDefinition: {
+        name: "reviewer",
+        description: "Reviews code",
+      },
+      task: "Review commits A..B",
+    });
+
+    assert.equal(result.isError, undefined);
+    assert.equal(result.content[0].text, "inline success reviewer inline");
+  } finally {
+    cleanup();
+  }
+});
+
+test("single-mode agent and agentDefinition together are rejected", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const result = runSubagentTool(moduleUrl, {
+      agent: "writer",
+      agentDefinition: {
+        name: "reviewer",
+        description: "Reviews code",
+      },
+      task: "Review commits A..B",
+    });
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /agentDefinition|Invalid parameters/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("single-mode inline agent definition without systemPrompt is accepted", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const result = runSubagentTool(moduleUrl, {
+      agentDefinition: {
+        name: "reviewer",
+        description: "Reviews code",
+        tools: ["read", "bash"],
+      },
+      task: "Review commits A..B",
+    });
+
+    assert.equal(result.isError, undefined);
+    assert.equal(result.content[0].text, "inline success reviewer inline");
+  } finally {
+    cleanup();
+  }
+});
+
+test("single-mode invalid inline agent definition returns isError true", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const result = runSubagentTool(moduleUrl, {
+      agentDefinition: {
+        name: "   ",
+        description: "Reviews code",
+      },
+      task: "Review commits A..B",
+    });
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /agentDefinition\.name|Invalid agentDefinition/);
   } finally {
     cleanup();
   }

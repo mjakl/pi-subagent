@@ -15,7 +15,11 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
-import { type AgentConfig, discoverAgents } from "./agents.js";
+import {
+  type AgentConfig,
+  discoverAgents,
+  normalizeInlineAgentDefinition,
+} from "./agents.js";
 import { renderCall, renderResult } from "./render.js";
 import { getResultSummaryText } from "./runner-events.js";
 import { mapConcurrent, runAgent } from "./runner.js";
@@ -47,10 +51,32 @@ const SUBAGENT_PREVENT_CYCLES_ENV = "PI_SUBAGENT_PREVENT_CYCLES";
 // Tool parameter schema
 // ---------------------------------------------------------------------------
 
-const TaskItem = Type.Object({
-  agent: Type.String({
-    description: "Name of an available agent (must match exactly)",
+const InlineAgentDefinitionSchema = Type.Object({
+  name: Type.String({
+    description: "Ephemeral inline agent name for this call.",
   }),
+  description: Type.String({
+    description: "What this inline agent does.",
+  }),
+  model: Type.Optional(Type.String({ description: "Optional model override." })),
+  thinking: Type.Optional(Type.String({ description: "Optional thinking override." })),
+  tools: Type.Optional(
+    Type.Array(Type.String(), {
+      description: "Optional built-in tools enabled for this inline agent.",
+    }),
+  ),
+  systemPrompt: Type.Optional(
+    Type.String({ description: "Optional appended system prompt for this inline agent." }),
+  ),
+});
+
+const TaskItem = Type.Object({
+  agent: Type.Optional(
+    Type.String({
+      description: "Name of an available agent (must match exactly)",
+    }),
+  ),
+  agentDefinition: Type.Optional(InlineAgentDefinitionSchema),
   task: Type.String({
     description:
       "Task description for this delegated run. In spawn mode include all required context; in fork mode the subagent also sees your current session context.",
@@ -67,6 +93,7 @@ const SubagentParams = Type.Object({
         "Agent name for single mode. Must match an available agent name exactly.",
     }),
   ),
+  agentDefinition: Type.Optional(InlineAgentDefinitionSchema),
   task: Type.Optional(
     Type.String({
       description:
@@ -518,10 +545,26 @@ Use single mode for one task, parallel mode when tasks are independent and can r
           }
         }
 
+        let inlineSingleAgent: AgentConfig | null = null;
+        if (params.agentDefinition !== undefined) {
+          try {
+            inlineSingleAgent = normalizeInlineAgentDefinition(
+              params.agentDefinition,
+            );
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return {
+              content: [{ type: "text", text: message }],
+              details: makeDetails("single")([]),
+              isError: true,
+            };
+          }
+        }
+
         // Validate: exactly one invocation shape must be specified
         const hasTasks = (params.tasks?.length ?? 0) > 0;
-        const hasSingle = Boolean(params.agent && params.task);
-        if (Number(hasTasks) + Number(hasSingle) !== 1) {
+        const hasSingle = Boolean(params.task && (params.agent || inlineSingleAgent));
+        if (Number(hasTasks) + Number(hasSingle) !== 1 || (params.agent && inlineSingleAgent)) {
           return {
             content: [
               {
@@ -534,10 +577,17 @@ Use single mode for one task, parallel mode when tasks are independent and can r
           };
         }
 
+        const agentsForCall = inlineSingleAgent ? [...agents, inlineSingleAgent] : agents;
+
         // Security: guard project-local agents before running
         const requested = new Set<string>();
-        if (params.tasks) for (const t of params.tasks) requested.add(t.agent);
+        if (params.tasks) {
+          for (const t of params.tasks) {
+            if (t.agent) requested.add(t.agent);
+          }
+        }
         if (params.agent) requested.add(params.agent);
+        if (inlineSingleAgent) requested.add(inlineSingleAgent.name);
 
         if (preventCycles) {
           const cycleViolations = getCycleViolations(
@@ -610,7 +660,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
             params.tasks,
             delegationMode,
             forkSessionSnapshotJsonl,
-            agents,
+            agentsForCall,
             ctx.cwd,
             signal,
             onUpdate,
@@ -619,14 +669,14 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
         }
 
         // ── Single mode ──
-        if (params.agent && params.task) {
+        if (params.task && (params.agent || inlineSingleAgent)) {
           return executeSingle(
-            params.agent,
+            params.agent ?? inlineSingleAgent!.name,
             params.task,
             params.cwd,
             delegationMode,
             forkSessionSnapshotJsonl,
-            agents,
+            agentsForCall,
             ctx.cwd,
             signal,
             onUpdate,
