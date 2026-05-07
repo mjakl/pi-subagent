@@ -70,6 +70,11 @@ New:
 
 Each task item may provide either `agent` or `agentDefinition`.
 
+Existing `cwd` behavior remains unchanged:
+- single mode continues to support top-level `cwd`
+- parallel mode continues to support per-task `cwd`
+- `cwd` is orthogonal to whether the task uses `agent` or `agentDefinition`
+
 ```json
 {
   "tasks": [
@@ -204,11 +209,20 @@ Cycle prevention still applies by agent `name`.
 
 An inline agent named `code-reviewer` participates in the delegation stack the same way as a file-based `code-reviewer` agent.
 
+### Name Collisions and Resolution
+
+Inline agent definitions are resolved directly from the provided object for that specific tool call. They do **not** participate in discovery precedence and are not overridden by discovered agents with the same name.
+
+This means:
+- a same-name discovered agent does not replace an inline `agentDefinition`
+- a named-agent lookup (`agent: "code-reviewer"`) still resolves through normal discovery rules
+- cycle checks still operate on the resolved runtime agent name, regardless of whether it came from discovery or an inline definition
+
 ### Rendering / Provenance
 
 If source is shown in details or rendering, inline agents should be marked as `inline`.
 
-This is useful but not required for the initial version unless rendering already depends on source values.
+For consistency with existing result metadata, the implementation should allow result provenance such as `agentSource: "inline"`.
 
 ---
 
@@ -237,6 +251,7 @@ For each task item:
 - exactly one of:
   - `agent`
   - `agentDefinition`
+- existing per-task `cwd` remains valid for both named and inline agents
 
 ### Inline Definition Validation
 
@@ -249,6 +264,8 @@ Optional:
 - `model`: omitted or string
 - `thinking`: omitted or string
 - `tools`: omitted or array of strings
+
+For the inline API, `tools` should accept only a string array. File-based agents may continue to support their existing more permissive parsing rules, but inline definitions should use the stricter structured form.
 
 ### Error Handling
 
