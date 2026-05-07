@@ -83,7 +83,7 @@ function createTestableIndexModule() {
   fs.writeFileSync(
     path.join(tmpDir, "runner.js"),
     `export async function runAgent(opts) {
-      const selectedAgent = opts.agents.find((agent) => agent.name === opts.agentName);
+      const selectedAgent = opts.agentConfig || opts.agents.find((agent) => agent.name === opts.agentName);
       if (!selectedAgent) {
         return {
           agent: opts.agentName,
@@ -104,7 +104,7 @@ function createTestableIndexModule() {
         task: opts.task,
         exitCode: 0,
         messages: [],
-        stderr: "inline success " + selectedAgent.name + " " + selectedAgent.source + (opts.taskCwd ? " " + opts.taskCwd : ""),
+        stderr: "inline success " + selectedAgent.name + " " + selectedAgent.source + (selectedAgent.systemPrompt ? " " + selectedAgent.systemPrompt : "") + (opts.taskCwd ? " " + opts.taskCwd : ""),
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
       };
     }
@@ -331,6 +331,81 @@ test("parallel mixed named and inline agents are accepted", () => {
     assert.equal(result.isError, undefined);
     assert.match(result.content[0].text, /inline success writer user/);
     assert.match(result.content[0].text, /inline success reviewer inline/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("parallel named and inline tasks with the same name keep their own configs", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const result = runSubagentTool(moduleUrl, {
+      confirmProjectAgents: false,
+      tasks: [
+        {
+          agent: "reviewer",
+          task: "Review the named agent path",
+        },
+        {
+          agentDefinition: {
+            name: "reviewer",
+            description: "Reviews code",
+            systemPrompt: "INLINE_REVIEW_PROMPT",
+          },
+          task: "Review the inline agent path",
+        },
+      ],
+    });
+
+    assert.equal(result.isError, undefined);
+    assert.match(
+      result.content[0].text,
+      /\[reviewer\] completed: inline success reviewer project You are project reviewer\./,
+    );
+    assert.match(
+      result.content[0].text,
+      /\[reviewer\] completed: inline success reviewer inline INLINE_REVIEW_PROMPT/,
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test("parallel inline tasks with the same public name keep their own configs", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const result = runSubagentTool(moduleUrl, {
+      tasks: [
+        {
+          agentDefinition: {
+            name: "reviewer",
+            description: "Reviews code",
+            systemPrompt: "INLINE_REVIEW_PROMPT_A",
+          },
+          task: "Review alpha",
+        },
+        {
+          agentDefinition: {
+            name: "reviewer",
+            description: "Reviews code",
+            systemPrompt: "INLINE_REVIEW_PROMPT_B",
+          },
+          task: "Review beta",
+        },
+      ],
+    });
+
+    assert.equal(result.isError, undefined);
+    assert.match(
+      result.content[0].text,
+      /\[reviewer\] completed: inline success reviewer inline INLINE_REVIEW_PROMPT_A/,
+    );
+    assert.match(
+      result.content[0].text,
+      /\[reviewer\] completed: inline success reviewer inline INLINE_REVIEW_PROMPT_B/,
+    );
   } finally {
     cleanup();
   }

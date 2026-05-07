@@ -138,10 +138,12 @@ function buildPiArgs(
 export interface RunAgentOptions {
   /** Fallback working directory when the task doesn't specify one. */
   cwd: string;
-  /** All available agent configs. */
+  /** All available named agent configs. */
   agents: AgentConfig[];
-  /** Name of the agent to run. */
+  /** Name shown to the caller for this agent run. */
   agentName: string;
+  /** Optional task-local agent config, used for inline agents and collision-free execution. */
+  agentConfig?: AgentConfig;
   /** Task description. */
   task: string;
   /** Optional override working directory. */
@@ -176,6 +178,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
     cwd,
     agents,
     agentName,
+    agentConfig,
     task,
     taskCwd,
     delegationMode,
@@ -189,7 +192,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
     makeDetails,
   } = opts;
 
-  const agent = agents.find((a) => a.name === agentName);
+  const agent = agentConfig ?? agents.find((a) => a.name === agentName);
   if (!agent) {
     const available = agents.map((a) => `"${a.name}"`).join(", ") || "none";
     return {

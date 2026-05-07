@@ -144,6 +144,14 @@ interface SessionSnapshotSource {
   getBranch: () => unknown[];
 }
 
+interface ResolvedTask {
+  agentName: string;
+  task: string;
+  cwd?: string;
+  agentConfig?: AgentConfig;
+  named: boolean;
+}
+
 function parseDelegationMode(raw: unknown): DelegationMode | null {
   if (raw === undefined) return DEFAULT_DELEGATION_MODE;
   if (typeof raw !== "string") return null;
@@ -590,8 +598,7 @@ Use single mode for one task, parallel mode when tasks are independent and can r
           };
         }
 
-        const inlineParallelAgents: AgentConfig[] = [];
-        const resolvedParallelTasks = [];
+        const resolvedParallelTasks: ResolvedTask[] = [];
         if (params.tasks) {
           for (const [index, taskItem] of params.tasks.entries()) {
             let inlineTaskAgent: AgentConfig | null = null;
@@ -623,9 +630,9 @@ Use single mode for one task, parallel mode when tasks are independent and can r
               };
             }
 
-            if (inlineTaskAgent) inlineParallelAgents.push(inlineTaskAgent);
             resolvedParallelTasks.push({
-              agent: taskItem.agent ?? inlineTaskAgent.name,
+              agentName: taskItem.agent ?? inlineTaskAgent.name,
+              agentConfig: inlineTaskAgent ?? undefined,
               task: taskItem.task,
               cwd: taskItem.cwd,
               named: !inlineTaskAgent,
@@ -633,18 +640,12 @@ Use single mode for one task, parallel mode when tasks are independent and can r
           }
         }
 
-        const agentsForCall = [
-          ...(inlineSingleAgent ? [inlineSingleAgent] : []),
-          ...inlineParallelAgents,
-          ...agents,
-        ];
-
         // Security: guard project-local agents before running
         const cycleRequested = new Set<string>();
         const namedRequested = new Set<string>();
         for (const taskItem of resolvedParallelTasks) {
-          cycleRequested.add(taskItem.agent);
-          if (taskItem.named) namedRequested.add(taskItem.agent);
+          cycleRequested.add(taskItem.agentName);
+          if (taskItem.named) namedRequested.add(taskItem.agentName);
         }
         if (params.agent) {
           cycleRequested.add(params.agent);
@@ -723,7 +724,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
             resolvedParallelTasks,
             delegationMode,
             forkSessionSnapshotJsonl,
-            agentsForCall,
+            agents,
             ctx.cwd,
             signal,
             onUpdate,
@@ -737,9 +738,10 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
             params.agent ?? inlineSingleAgent!.name,
             params.task,
             params.cwd,
+            inlineSingleAgent ?? undefined,
             delegationMode,
             forkSessionSnapshotJsonl,
-            agentsForCall,
+            agents,
             ctx.cwd,
             signal,
             onUpdate,
@@ -773,6 +775,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
     agentName: string,
     task: string,
     cwd: string | undefined,
+    agentConfig: AgentConfig | undefined,
     delegationMode: DelegationMode,
     forkSessionSnapshotJsonl: string | undefined,
     agents: AgentConfig[],
@@ -785,6 +788,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
       cwd: defaultCwd,
       agents,
       agentName,
+      agentConfig,
       task,
       taskCwd: cwd,
       delegationMode,
@@ -822,7 +826,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
   }
 
   async function executeParallel(
-    tasks: Array<{ agent: string; task: string; cwd?: string }>,
+    tasks: ResolvedTask[],
     delegationMode: DelegationMode,
     forkSessionSnapshotJsonl: string | undefined,
     agents: AgentConfig[],
@@ -846,7 +850,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
 
     // Initialize placeholder results for streaming
     const allResults: SingleResult[] = tasks.map((t) => ({
-      agent: t.agent,
+      agent: t.agentName,
       agentSource: "unknown" as const,
       task: t.task,
       exitCode: -1,
@@ -887,7 +891,8 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
           const result = await runAgent({
             cwd: defaultCwd,
             agents,
-            agentName: t.agent,
+            agentName: t.agentName,
+            agentConfig: t.agentConfig,
             task: t.task,
             taskCwd: t.cwd,
             delegationMode,
