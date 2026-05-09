@@ -366,30 +366,49 @@ function buildRenderCallTasks(
   args: Record<string, any>,
   agents: AgentConfig[],
 ): TaskDisplayState[] {
+  const safeNormalizeInlineAgent = (definition: unknown): AgentConfig | undefined => {
+    if (definition === undefined) return undefined;
+    try {
+      return normalizeInlineAgentDefinition(definition);
+    } catch {
+      return undefined;
+    }
+  };
+
   if (Array.isArray(args.tasks) && args.tasks.length > 0) {
     return args.tasks.map((taskItem) => {
-      const inlineAgent = taskItem.agentDefinition
-        ? normalizeInlineAgentDefinition(taskItem.agentDefinition)
-        : undefined;
+      const task =
+        taskItem && typeof taskItem === "object"
+          ? (taskItem as Record<string, unknown>)
+          : {};
+      const inlineAgent = safeNormalizeInlineAgent(task.agentDefinition);
+      const namedAgentName = typeof task.agent === "string" ? task.agent : undefined;
       const namedAgent = inlineAgent
         ? undefined
-        : agents.find((agent) => agent.name === taskItem.agent);
+        : agents.find((agent) => agent.name === namedAgentName);
       const agentConfig = inlineAgent ?? namedAgent;
       return buildTaskDisplayState(
-        taskItem.agent ?? inlineAgent?.name ?? "...",
-        taskItem.task ?? "",
+        namedAgentName ?? inlineAgent?.name ?? "...",
+        typeof task.task === "string" ? task.task : "",
         agentConfig,
       );
     });
   }
 
-  const inlineAgent = args.agentDefinition
-    ? normalizeInlineAgentDefinition(args.agentDefinition)
-    : undefined;
-  const namedAgent = inlineAgent ? undefined : agents.find((agent) => agent.name === args.agent);
+  const inlineAgent = safeNormalizeInlineAgent(args.agentDefinition);
+  const namedAgentName = typeof args.agent === "string" ? args.agent : undefined;
+  const namedAgent = inlineAgent
+    ? undefined
+    : agents.find((agent) => agent.name === namedAgentName);
   const agentConfig = inlineAgent ?? namedAgent;
   if (!args.task) return [];
-  return [buildTaskDisplayState(args.agent ?? inlineAgent?.name ?? "...", args.task, agentConfig)];
+  return [
+    buildTaskDisplayState(
+      namedAgentName ?? inlineAgent?.name ?? "...",
+      args.task,
+      agentConfig,
+    ),
+  ];
 }
 
 function makeDetailsFactory(

@@ -807,6 +807,38 @@ test("registered tool renderCall receives resolved model metadata", () => {
   }
 });
 
+test("registered tool renderCall degrades gracefully for malformed single inline agentDefinition", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const preview = renderRegisteredToolCall(moduleUrl, {
+      agentDefinition: {
+        name: "   ",
+        description: "Reviews code",
+      },
+      task: "Review this diff",
+    });
+
+    assert.match(preview, /\.\.\.\|resolving/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("registered tool renderCall degrades gracefully for malformed parallel task items", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const preview = renderRegisteredToolCall(moduleUrl, {
+      tasks: [null],
+    });
+
+    assert.match(preview, /\.\.\.\|resolving/);
+  } finally {
+    cleanup();
+  }
+});
+
 test("parallel task schema mentions agentDefinition", () => {
   const { moduleUrl, cleanup } = createTestableIndexModule();
 
