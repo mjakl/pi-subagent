@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testDir, "..");
@@ -39,4 +40,19 @@ test("package files include README demo GIF asset", () => {
 
   assert.ok(Array.isArray(pkg.files));
   assert.ok(pkg.files.includes("docs/assets/subagent-demo.gif"));
+});
+
+test("npm pack dry-run includes README demo GIF asset in packed files", () => {
+  const output = execFileSync("npm", ["pack", "--dry-run", "--json"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+
+  const packResult = JSON.parse(output);
+  assert.ok(Array.isArray(packResult));
+  assert.equal(packResult.length, 1);
+  assert.ok(Array.isArray(packResult[0].files));
+
+  const packedPaths = packResult[0].files.map((file) => file.path);
+  assert.ok(packedPaths.includes("docs/assets/subagent-demo.gif"));
 });
