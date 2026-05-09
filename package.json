@@ -14,6 +14,7 @@
     "types.ts",
     "agents/*.md",
     "README.md",
+    "docs/assets/subagent-demo.gif",
     "LICENSE"
   ],
   "pi": {

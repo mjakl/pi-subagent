@@ -31,3 +31,12 @@ test("package declares Node 22+ when test script uses experimental strip-types",
   assert.equal(typeof pkg.engines?.node, "string");
   assert.match(pkg.engines.node, />=\s*22(?:\.0\.0)?/);
 });
+
+test("package files include README demo GIF asset", () => {
+  const pkg = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"),
+  );
+
+  assert.ok(Array.isArray(pkg.files));
+  assert.ok(pkg.files.includes("docs/assets/subagent-demo.gif"));
+});
