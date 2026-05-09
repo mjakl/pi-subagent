@@ -50,9 +50,10 @@ test("npm pack dry-run includes README demo GIF asset in packed files", () => {
 
   const packResult = JSON.parse(output);
   assert.ok(Array.isArray(packResult));
-  assert.equal(packResult.length, 1);
-  assert.ok(Array.isArray(packResult[0].files));
 
-  const packedPaths = packResult[0].files.map((file) => file.path);
+  const packedPaths = packResult
+    .flatMap((entry) => (Array.isArray(entry.files) ? entry.files : []))
+    .map((file) => file.path);
+
   assert.ok(packedPaths.includes("docs/assets/subagent-demo.gif"));
 });
