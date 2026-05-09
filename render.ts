@@ -38,7 +38,7 @@ function formatTokens(count: number): string {
 	return `${(count / 1000000).toFixed(1)}M`;
 }
 
-function formatUsage(usage: Partial<UsageStats>, model?: string): string {
+function formatUsage(usage: Partial<UsageStats>): string {
 	const parts: string[] = [];
 	if (usage.turns) parts.push(`${usage.turns} turn${usage.turns > 1 ? "s" : ""}`);
 	if (usage.input) parts.push(`↑${formatTokens(usage.input)}`);
@@ -47,8 +47,14 @@ function formatUsage(usage: Partial<UsageStats>, model?: string): string {
 	if (usage.cacheWrite) parts.push(`W${formatTokens(usage.cacheWrite)}`);
 	if (usage.cost) parts.push(`$${usage.cost.toFixed(4)}`);
 	if (usage.contextTokens && usage.contextTokens > 0) parts.push(`ctx:${formatTokens(usage.contextTokens)}`);
-	if (model) parts.push(model);
 	return parts.join(" ");
+}
+
+function formatTaskFooterUsage(r: SingleResult): string {
+	const usageStr = formatUsage(r.usage);
+	const configuredModel = typeof r.model === "string" ? r.model.trim() : "";
+	const modelText = configuredModel || getModelDisplayTextSafe(r.modelDisplay);
+	return usageStr ? `${usageStr} • ${modelText}` : modelText;
 }
 
 function getModelDisplayTextSafe(modelDisplay: SingleResult["modelDisplay"]): string {
@@ -317,7 +323,6 @@ function renderSingleExpanded(
 	container.addChild(new Spacer(1));
 	container.addChild(new Text(theme.fg("muted", "─── Task ───"), 0, 0));
 	container.addChild(new Text(theme.fg("dim", r.task), 0, 0));
-	container.addChild(new Text(theme.fg("muted", formatModelLine(r.modelDisplay)), 0, 0));
 
 	// Output
 	container.addChild(new Spacer(1));
@@ -337,12 +342,9 @@ function renderSingleExpanded(
 		}
 	}
 
-	// Usage
-	const usageStr = formatUsage(r.usage, r.model);
-	if (usageStr) {
-		container.addChild(new Spacer(1));
-		container.addChild(new Text(theme.fg("dim", usageStr), 0, 0));
-	}
+	// Usage / model footer
+	container.addChild(new Spacer(1));
+	container.addChild(new Text(theme.fg("dim", formatTaskFooterUsage(r)), 0, 0));
 
 	return container;
 }
@@ -358,8 +360,6 @@ function renderSingleCollapsed(
 	let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource}, ${delegationMode})`)}`;
 	if (error && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 
-	text += `\n${theme.fg("muted", formatModelLine(r.modelDisplay))}`;
-
 	if (error && r.errorMessage) {
 		text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
 	} else if (displayItems.length === 0) {
@@ -371,8 +371,7 @@ function renderSingleCollapsed(
 		}
 	}
 
-	const usageStr = formatUsage(r.usage, r.model);
-	if (usageStr) text += `\n${theme.fg("dim", usageStr)}`;
+	text += `\n${theme.fg("dim", formatTaskFooterUsage(r))}`;
 	return new Text(text, 0, 0);
 }
 
@@ -440,7 +439,6 @@ function renderParallelExpanded(
 		container.addChild(new Spacer(1));
 		container.addChild(new Text(`${theme.fg("muted", "─── ")}${theme.fg("accent", r.agent)} ${rIcon}`, 0, 0));
 		container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
-		container.addChild(new Text(theme.fg("muted", formatModelLine(r.modelDisplay)), 0, 0));
 
 		for (const item of displayItems) {
 			if (item.type === "toolCall") {
@@ -456,8 +454,7 @@ function renderParallelExpanded(
 			container.addChild(new Text(theme.fg("error", getResultSummaryText(r)), 0, 0));
 		}
 
-		const taskUsage = formatUsage(r.usage, r.model);
-		if (taskUsage) container.addChild(new Text(theme.fg("dim", taskUsage), 0, 0));
+		container.addChild(new Text(theme.fg("dim", formatTaskFooterUsage(r)), 0, 0));
 	}
 
 	const totalUsage = formatUsage(aggregateUsage(details.results));
@@ -484,12 +481,12 @@ function renderParallelCollapsed(
 		const rIcon = statusIcon(r, theme);
 		const displayItems = getDisplayItems(r.messages);
 		text += `\n\n${theme.fg("muted", "─── ")}${theme.fg("accent", r.agent)} ${rIcon}`;
-		text += `\n${theme.fg("muted", formatModelLine(r.modelDisplay))}`;
 		if (displayItems.length === 0) {
 			text += `\n${theme.fg(r.exitCode === -1 ? "muted" : isResultError(r) ? "error" : "muted", r.exitCode === -1 ? "(running...)" : getResultSummaryText(r))}`;
 		} else {
 			text += `\n${renderDisplayItems(displayItems, false, theme, COLLAPSED_PARALLEL_LINE_COUNT)}`;
 		}
+		text += `\n${theme.fg("dim", formatTaskFooterUsage(r))}`;
 	}
 
 	if (!isRunning) {

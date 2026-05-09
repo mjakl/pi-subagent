@@ -119,7 +119,7 @@ function renderCallPreview(moduleUrl, args, taskDisplays = []) {
   );
 }
 
-function renderResultPreview(moduleUrl, result) {
+function renderResultPreview(moduleUrl, result, expanded = false) {
   const script = `
     import { renderResult } from ${JSON.stringify(moduleUrl)};
 
@@ -141,7 +141,7 @@ function renderResultPreview(moduleUrl, result) {
       bold(text) { return text; },
     };
 
-    const rendered = renderResult(${JSON.stringify(result)}, false, theme);
+    const rendered = renderResult(${JSON.stringify(result)}, ${JSON.stringify(expanded)}, theme);
     process.stdout.write(JSON.stringify(toText(rendered)));
   `;
 
@@ -190,7 +190,7 @@ test("renderCall shows configured model labels", () => {
   }
 });
 
-test("renderResult shows resolving labels for running tasks", () => {
+test("single renderResult keeps model in footer for running tasks without usage", () => {
   const { moduleUrl, cleanup } = createTestableRenderModule();
 
   try {
@@ -215,13 +215,54 @@ test("renderResult shows resolving labels for running tasks", () => {
       },
     });
 
-    assert.match(text, /Model: \(resolving model…\)/);
+    assert.doesNotMatch(text, /Model:/);
+    assert.match(text, /\(resolving model…\)/);
   } finally {
     cleanup();
   }
 });
 
-test("parallel renderResult shows per-task model labels", () => {
+test("single expanded renderResult appends model to usage footer", () => {
+  const { moduleUrl, cleanup } = createTestableRenderModule();
+
+  try {
+    const text = renderResultPreview(
+      moduleUrl,
+      {
+        content: [{ type: "text", text: "done" }],
+        details: {
+          mode: "single",
+          delegationMode: "spawn",
+          projectAgentsDir: null,
+          results: [
+            {
+              agent: "writer",
+              agentSource: "user",
+              task: "Draft release notes",
+              exitCode: 0,
+              messages: [{ role: "assistant", content: [{ type: "text", text: "Done." }] }],
+              stderr: "",
+              usage: {
+                ...zeroUsage,
+                contextTokens: 5200,
+              },
+              model: "openai/gpt-5.3-codex",
+              modelDisplay: { status: "configured", text: "openai/gpt-5.3-codex" },
+            },
+          ],
+        },
+      },
+      true,
+    );
+
+    assert.doesNotMatch(text, /Model:/);
+    assert.match(text, /ctx:5\.2k.*openai\/gpt-5\.3-codex/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("parallel renderResult shows models in footer without model labels", () => {
   const { moduleUrl, cleanup } = createTestableRenderModule();
 
   try {
@@ -256,6 +297,7 @@ test("parallel renderResult shows per-task model labels", () => {
       },
     });
 
+    assert.doesNotMatch(text, /Model:/);
     assert.match(text, /openai\/gpt-5.3-codex/);
     assert.match(text, /\(resolving model…\)/);
   } finally {
