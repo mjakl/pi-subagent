@@ -45,7 +45,7 @@ export interface SingleResult {
 	messages: Message[];
 	stderr: string;
 	usage: UsageStats;
-	modelDisplay: ModelDisplayState;
+	modelDisplay?: ModelDisplayState;
 	model?: string;
 	stopReason?: string;
 	errorMessage?: string;
@@ -57,7 +57,7 @@ export interface SubagentDetails {
 	mode: "single" | "parallel";
 	delegationMode: DelegationMode;
 	projectAgentsDir: string | null;
-	tasks: TaskDisplayState[];
+	tasks?: TaskDisplayState[];
 	results: SingleResult[];
 }
 
