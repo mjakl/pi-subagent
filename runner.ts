@@ -14,6 +14,7 @@ import { parseInheritedCliArgs } from "./runner-cli.js";
 import { processPiJsonLine } from "./runner-events.js";
 import {
   type DelegationMode,
+  type ModelDisplayState,
   type SingleResult,
   type SubagentDetails,
   emptyUsage,
@@ -148,6 +149,8 @@ export interface RunAgentOptions {
   task: string;
   /** Optional override working directory. */
   taskCwd?: string;
+  /** Resolved model display metadata at task start. */
+  initialModelDisplay: ModelDisplayState;
   /** Context mode: spawn (fresh) or fork (session snapshot + task). */
   delegationMode: DelegationMode;
   /** Serialized parent session snapshot used when delegationMode is "fork". */
@@ -181,6 +184,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
     agentConfig,
     task,
     taskCwd,
+    initialModelDisplay,
     delegationMode,
     forkSessionSnapshotJsonl,
     parentDepth,
@@ -203,6 +207,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
       messages: [],
       stderr: `Unknown agent: "${agentName}". Available agents: ${available}.`,
       usage: emptyUsage(),
+      modelDisplay: initialModelDisplay,
     };
   }
 
@@ -220,6 +225,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
         "Cannot run in fork mode: missing parent session snapshot context.",
       usage: emptyUsage(),
       model: agent.model,
+      modelDisplay: initialModelDisplay,
       stopReason: "error",
       errorMessage:
         "Cannot run in fork mode: missing parent session snapshot context.",
@@ -235,6 +241,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
     stderr: "",
     usage: emptyUsage(),
     model: agent.model,
+    modelDisplay: initialModelDisplay,
   };
 
   const emitUpdate = () => {
