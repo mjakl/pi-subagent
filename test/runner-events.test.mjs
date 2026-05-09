@@ -20,6 +20,7 @@ function makeResult() {
     exitCode: -1,
     messages: [],
     stderr: "",
+    modelDisplay: { status: "resolving" },
     usage: {
       input: 0,
       output: 0,
@@ -125,4 +126,33 @@ test("combines all text parts from the final assistant message", () => {
 
   assert.equal(getFinalAssistantText(result.messages), "Part 1. Part 2.");
   assert.equal(getResultSummaryText(result), "Part 1. Part 2.");
+});
+
+test("runtime model metadata replaces configured display state", () => {
+  const result = makeResult({
+    model: "openai/gpt-5.3-codex",
+    modelDisplay: {
+      text: "openai/gpt-5.3-codex",
+      status: "configured",
+    },
+  });
+
+  processPiEvent(
+    {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        model: "anthropic/claude-3.7-sonnet",
+        content: [{ type: "text", text: "Done." }],
+        timestamp: 1,
+      },
+    },
+    result,
+  );
+
+  assert.equal(result.model, "anthropic/claude-3.7-sonnet");
+  assert.deepEqual(result.modelDisplay, {
+    text: "anthropic/claude-3.7-sonnet",
+    status: "runtime",
+  });
 });

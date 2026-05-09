@@ -35,7 +35,13 @@ function getMessageSignature(message) {
 
 function updateAssistantMetadata(result, message) {
   if (!message || message.role !== "assistant") return;
-  if (!result.model && message.model) result.model = message.model;
+  if (message.model) {
+    result.model = message.model;
+    result.modelDisplay = {
+      text: message.model,
+      status: "runtime",
+    };
+  }
   if (message.stopReason) result.stopReason = message.stopReason;
   if (message.errorMessage) result.errorMessage = message.errorMessage;
 }

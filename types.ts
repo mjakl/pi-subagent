@@ -22,6 +22,20 @@ export interface UsageStats {
 	turns: number;
 }
 
+export type ModelDisplayStatus = "configured" | "runtime" | "resolving";
+
+export interface ModelDisplayState {
+	text?: string;
+	status: ModelDisplayStatus;
+}
+
+export interface TaskDisplayState {
+	agent: string;
+	agentSource: SingleResult["agentSource"];
+	task: string;
+	modelDisplay: ModelDisplayState;
+}
+
 /** Result of a single subagent invocation. */
 export interface SingleResult {
 	agent: string;
@@ -31,6 +45,7 @@ export interface SingleResult {
 	messages: Message[];
 	stderr: string;
 	usage: UsageStats;
+	modelDisplay: ModelDisplayState;
 	model?: string;
 	stopReason?: string;
 	errorMessage?: string;
@@ -42,6 +57,7 @@ export interface SubagentDetails {
 	mode: "single" | "parallel";
 	delegationMode: DelegationMode;
 	projectAgentsDir: string | null;
+	tasks: TaskDisplayState[];
 	results: SingleResult[];
 }
 
@@ -67,6 +83,16 @@ export function aggregateUsage(results: SingleResult[]): UsageStats {
 		total.turns += r.usage.turns;
 	}
 	return total;
+}
+
+export function createModelDisplayState(model?: string): ModelDisplayState {
+	const trimmed = typeof model === "string" ? model.trim() : "";
+	return trimmed ? { text: trimmed, status: "configured" } : { status: "resolving" };
+}
+
+export function getModelDisplayText(modelDisplay?: ModelDisplayState): string {
+	if (modelDisplay?.text) return modelDisplay.text;
+	return "(resolving model…)";
 }
 
 /** Whether the child emitted a final assistant text response. */
