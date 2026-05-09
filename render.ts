@@ -6,12 +6,15 @@ import * as os from "node:os";
 import { getMarkdownTheme } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
 import { getResultSummaryText } from "./runner-events.js";
+import type {
+	DelegationMode,
+	DisplayItem,
+	SingleResult,
+	SubagentDetails,
+	TaskDisplayState,
+	UsageStats,
+} from "./types.js";
 import {
-	type DelegationMode,
-	type DisplayItem,
-	type SingleResult,
-	type SubagentDetails,
-	type UsageStats,
 	DEFAULT_DELEGATION_MODE,
 	aggregateUsage,
 	getDisplayItems,
@@ -19,6 +22,7 @@ import {
 	isResultError,
 	isResultSuccess,
 } from "./types.js";
+import * as typeHelpers from "./types.js";
 
 const COLLAPSED_LINE_COUNT = 10;
 const COLLAPSED_PARALLEL_LINE_COUNT = 5;
@@ -45,6 +49,26 @@ function formatUsage(usage: Partial<UsageStats>, model?: string): string {
 	if (usage.contextTokens && usage.contextTokens > 0) parts.push(`ctx:${formatTokens(usage.contextTokens)}`);
 	if (model) parts.push(model);
 	return parts.join(" ");
+}
+
+function getModelDisplayTextSafe(modelDisplay: SingleResult["modelDisplay"]): string {
+	if (typeof typeHelpers.getModelDisplayText === "function") {
+		return typeHelpers.getModelDisplayText(modelDisplay);
+	}
+	if (modelDisplay?.text) return modelDisplay.text;
+	return "(resolving model…)";
+}
+
+function createModelDisplayStateSafe(model: unknown): SingleResult["modelDisplay"] {
+	if (typeof typeHelpers.createModelDisplayState === "function") {
+		return typeHelpers.createModelDisplayState(model as string);
+	}
+	const trimmed = typeof model === "string" ? model.trim() : "";
+	return trimmed ? { text: trimmed, status: "configured" } : { status: "resolving" };
+}
+
+function formatModelLine(modelDisplay: SingleResult["modelDisplay"]): string {
+	return `Model: ${getModelDisplayTextSafe(modelDisplay)}`;
 }
 
 function truncate(text: string, maxLen: number): string {
@@ -154,31 +178,65 @@ function statusIcon(r: SingleResult, theme: { fg: ThemeFg }): string {
 // renderCall — shown while the tool is being invoked
 // ---------------------------------------------------------------------------
 
-export function renderCall(args: Record<string, any>, theme: { fg: ThemeFg; bold: (s: string) => string }): Text {
+export function renderCall(
+	args: Record<string, any>,
+	theme: { fg: ThemeFg; bold: (s: string) => string },
+	taskDisplays: TaskDisplayState[] = [],
+): Text {
 	const delegationMode = normalizeDelegationMode(args.mode);
 	const modeBadge = theme.fg("muted", ` [${delegationMode}]`);
+	const safeTaskDisplays = Array.isArray(taskDisplays) ? taskDisplays : [];
+	const isParallel = Array.isArray(args.tasks) || safeTaskDisplays.length > 1;
 
-	if (args.tasks && args.tasks.length > 0) {
+	if (isParallel) {
+		const fallbackTaskDisplays: TaskDisplayState[] = Array.isArray(args.tasks)
+			? args.tasks
+				.filter((task: unknown): task is Record<string, unknown> => Boolean(task && typeof task === "object"))
+				.map((task) => {
+					const inlineDef = task.agentDefinition;
+					const inlineModel = inlineDef && typeof inlineDef === "object"
+						? (inlineDef as { model?: unknown }).model
+						: undefined;
+					return {
+						agent: typeof task.agent === "string"
+							? task.agent
+							: inlineDef && typeof inlineDef === "object" && typeof (inlineDef as { name?: unknown }).name === "string"
+								? ((inlineDef as { name: string }).name || "...")
+								: "...",
+						agentSource: "unknown",
+						task: typeof task.task === "string" ? task.task : "...",
+						modelDisplay: createModelDisplayStateSafe(inlineModel),
+					};
+				})
+			: [];
+		const previewTasks = safeTaskDisplays.length > 0 ? safeTaskDisplays : fallbackTaskDisplays;
+		const previewCount = Array.isArray(args.tasks) ? args.tasks.length : previewTasks.length;
 		let text =
 			theme.fg("toolTitle", theme.bold("subagent ")) +
-			theme.fg("accent", `parallel (${args.tasks.length} tasks)`) +
+			theme.fg("accent", `parallel (${previewCount} tasks)`) +
 			modeBadge;
-		for (const t of args.tasks.slice(0, 3)) {
-			const agentName = t.agent || t.agentDefinition?.name || "...";
-			text += `\n  ${theme.fg("accent", agentName)}${theme.fg("dim", ` ${truncate(t.task, 40)}`)}`;
+
+		for (const taskDisplay of previewTasks.slice(0, 3)) {
+			text += `\n  ${theme.fg("accent", taskDisplay.agent)}${theme.fg("dim", ` ${truncate(taskDisplay.task, 40)}`)}`;
+			text += `\n    ${theme.fg("muted", formatModelLine(taskDisplay.modelDisplay))}`;
 		}
-		if (args.tasks.length > 3) text += `\n  ${theme.fg("muted", `... +${args.tasks.length - 3} more`)}`;
+
+		if (previewCount > previewTasks.slice(0, 3).length) {
+			text += `\n  ${theme.fg("muted", `... +${previewCount - previewTasks.slice(0, 3).length} more`)}`;
+		}
 		return new Text(text, 0, 0);
 	}
 
-	// Single mode
-	const agentName = args.agent || args.agentDefinition?.name || "...";
-	const preview = args.task ? truncate(args.task, 60) : "...";
+	const taskDisplay = safeTaskDisplays[0];
+	const agentName = taskDisplay?.agent || args.agent || args.agentDefinition?.name || "...";
+	const previewSource = taskDisplay?.task ?? (typeof args.task === "string" ? args.task : "...");
+	const modelDisplay = taskDisplay?.modelDisplay ?? createModelDisplayStateSafe(args.agentDefinition?.model);
 	let text =
 		theme.fg("toolTitle", theme.bold("subagent ")) +
 		theme.fg("accent", agentName) +
 		modeBadge;
-	text += `\n  ${theme.fg("dim", preview)}`;
+	text += `\n  ${theme.fg("dim", truncate(previewSource, 60))}`;
+	text += `\n  ${theme.fg("muted", formatModelLine(modelDisplay))}`;
 	return new Text(text, 0, 0);
 }
 
@@ -259,6 +317,7 @@ function renderSingleExpanded(
 	container.addChild(new Spacer(1));
 	container.addChild(new Text(theme.fg("muted", "─── Task ───"), 0, 0));
 	container.addChild(new Text(theme.fg("dim", r.task), 0, 0));
+	container.addChild(new Text(theme.fg("muted", formatModelLine(r.modelDisplay)), 0, 0));
 
 	// Output
 	container.addChild(new Spacer(1));
@@ -298,6 +357,8 @@ function renderSingleCollapsed(
 ): Text {
 	let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource}, ${delegationMode})`)}`;
 	if (error && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
+
+	text += `\n${theme.fg("muted", formatModelLine(r.modelDisplay))}`;
 
 	if (error && r.errorMessage) {
 		text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
@@ -379,6 +440,7 @@ function renderParallelExpanded(
 		container.addChild(new Spacer(1));
 		container.addChild(new Text(`${theme.fg("muted", "─── ")}${theme.fg("accent", r.agent)} ${rIcon}`, 0, 0));
 		container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
+		container.addChild(new Text(theme.fg("muted", formatModelLine(r.modelDisplay)), 0, 0));
 
 		for (const item of displayItems) {
 			if (item.type === "toolCall") {
@@ -422,6 +484,7 @@ function renderParallelCollapsed(
 		const rIcon = statusIcon(r, theme);
 		const displayItems = getDisplayItems(r.messages);
 		text += `\n\n${theme.fg("muted", "─── ")}${theme.fg("accent", r.agent)} ${rIcon}`;
+		text += `\n${theme.fg("muted", formatModelLine(r.modelDisplay))}`;
 		if (displayItems.length === 0) {
 			text += `\n${theme.fg(r.exitCode === -1 ? "muted" : isResultError(r) ? "error" : "muted", r.exitCode === -1 ? "(running...)" : getResultSummaryText(r))}`;
 		} else {
