@@ -24,6 +24,9 @@
   "scripts": {
     "test": "node --experimental-strip-types --test"
   },
+  "engines": {
+    "node": ">=22"
+  },
   "keywords": [
     "pi",
     "subagent",

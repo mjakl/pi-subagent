@@ -20,3 +20,14 @@ test("extension uses pi-compatible typebox import and peer dependency", () => {
   assert.equal(pkg.peerDependenciesMeta.typebox?.optional, true);
   assert.equal(pkg.peerDependenciesMeta["@sinclair/typebox"], undefined);
 });
+
+test("package declares Node 22+ when test script uses experimental strip-types", () => {
+  const pkg = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"),
+  );
+
+  if (!pkg.scripts?.test?.includes("--experimental-strip-types")) return;
+
+  assert.equal(typeof pkg.engines?.node, "string");
+  assert.match(pkg.engines.node, />=\s*22(?:\.0\.0)?/);
+});
