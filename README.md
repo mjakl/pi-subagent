@@ -1,5 +1,7 @@
 # Pi Subagent
 
+![Pi Subagent demo](docs/assets/subagent-demo.gif)
+
 **Delegate tasks to specialized subagents with configurable context modes (`spawn` / `fork`).**
 
 There are many subagent extensions for pi, this one is mine.

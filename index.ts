@@ -25,9 +25,12 @@ import { getResultSummaryText } from "./runner-events.js";
 import { mapConcurrent, runAgent } from "./runner.js";
 import {
   type DelegationMode,
+  type ModelDisplayState,
   type SingleResult,
   type SubagentDetails,
+  type TaskDisplayState,
   DEFAULT_DELEGATION_MODE,
+  createModelDisplayState,
   emptyUsage,
   isResultError,
   isResultSuccess,
@@ -150,6 +153,8 @@ interface ResolvedTask {
   cwd?: string;
   agentConfig?: AgentConfig;
   named: boolean;
+  agentSource: SingleResult["agentSource"];
+  modelDisplay: ModelDisplayState;
 }
 
 function parseDelegationMode(raw: unknown): DelegationMode | null {
@@ -344,15 +349,79 @@ function resolveDelegationDepthConfig(pi: ExtensionAPI): DelegationDepthConfig {
   };
 }
 
+function buildTaskDisplayState(
+  agentName: string,
+  task: string,
+  agentConfig: AgentConfig | undefined,
+): TaskDisplayState {
+  return {
+    agent: agentName,
+    agentSource: agentConfig?.source ?? "unknown",
+    task,
+    modelDisplay: createModelDisplayState(agentConfig?.model),
+  };
+}
+
+function buildRenderCallTasks(
+  args: Record<string, any>,
+  agents: AgentConfig[],
+): TaskDisplayState[] {
+  const safeNormalizeInlineAgent = (definition: unknown): AgentConfig | undefined => {
+    if (definition === undefined) return undefined;
+    try {
+      return normalizeInlineAgentDefinition(definition);
+    } catch {
+      return undefined;
+    }
+  };
+
+  if (Array.isArray(args.tasks) && args.tasks.length > 0) {
+    return args.tasks.map((taskItem) => {
+      const task =
+        taskItem && typeof taskItem === "object"
+          ? (taskItem as Record<string, unknown>)
+          : {};
+      const inlineAgent = safeNormalizeInlineAgent(task.agentDefinition);
+      const namedAgentName = typeof task.agent === "string" ? task.agent : undefined;
+      const namedAgent = inlineAgent
+        ? undefined
+        : agents.find((agent) => agent.name === namedAgentName);
+      const agentConfig = inlineAgent ?? namedAgent;
+      return buildTaskDisplayState(
+        namedAgentName ?? inlineAgent?.name ?? "...",
+        typeof task.task === "string" ? task.task : "",
+        agentConfig,
+      );
+    });
+  }
+
+  const inlineAgent = safeNormalizeInlineAgent(args.agentDefinition);
+  const namedAgentName = typeof args.agent === "string" ? args.agent : undefined;
+  const namedAgent = inlineAgent
+    ? undefined
+    : agents.find((agent) => agent.name === namedAgentName);
+  const agentConfig = inlineAgent ?? namedAgent;
+  if (!args.task) return [];
+  return [
+    buildTaskDisplayState(
+      namedAgentName ?? inlineAgent?.name ?? "...",
+      args.task,
+      agentConfig,
+    ),
+  ];
+}
+
 function makeDetailsFactory(
   projectAgentsDir: string | null,
   delegationMode: DelegationMode,
+  tasks: TaskDisplayState[],
 ) {
   return (mode: "single" | "parallel") =>
     (results: SingleResult[]): SubagentDetails => ({
       mode,
       delegationMode,
       projectAgentsDir,
+      tasks,
       results,
     });
 }
@@ -522,6 +591,7 @@ Use single mode for one task, parallel mode when tasks are independent and can r
           const fallbackDetails = makeDetailsFactory(
             discovery.projectAgentsDir,
             DEFAULT_DELEGATION_MODE,
+            [],
           );
           return {
             content: [
@@ -535,9 +605,10 @@ Use single mode for one task, parallel mode when tasks are independent and can r
           };
         }
 
-        const makeDetails = makeDetailsFactory(
+        const makeEmptyDetails = makeDetailsFactory(
           discovery.projectAgentsDir,
           delegationMode,
+          [],
         );
 
         let forkSessionSnapshotJsonl: string | undefined;
@@ -553,7 +624,7 @@ Use single mode for one task, parallel mode when tasks are independent and can r
                   text: "Cannot use mode=\"fork\": failed to snapshot current session context.",
                 },
               ],
-              details: makeDetails("single")([]),
+              details: makeEmptyDetails("single")([]),
               isError: true,
             };
           }
@@ -569,7 +640,7 @@ Use single mode for one task, parallel mode when tasks are independent and can r
             const message = error instanceof Error ? error.message : String(error);
             return {
               content: [{ type: "text", text: message }],
-              details: makeDetails("single")([]),
+              details: makeEmptyDetails("single")([]),
               isError: true,
             };
           }
@@ -593,7 +664,7 @@ Use single mode for one task, parallel mode when tasks are independent and can r
                 text: `Invalid parameters. Provide exactly one invocation shape.\nAvailable agents: ${formatAgentNames(agents)}`,
               },
             ],
-            details: makeDetails("single")([]),
+            details: makeEmptyDetails("single")([]),
             isError: true,
           };
         }
@@ -611,7 +682,7 @@ Use single mode for one task, parallel mode when tasks are independent and can r
                 const message = error instanceof Error ? error.message : String(error);
                 return {
                   content: [{ type: "text", text: `Invalid task[${index}]. ${message}` }],
-                  details: makeDetails("parallel")([]),
+                  details: makeEmptyDetails("parallel")([]),
                   isError: true,
                 };
               }
@@ -625,20 +696,55 @@ Use single mode for one task, parallel mode when tasks are independent and can r
                     text: `Invalid task[${index}]. Provide exactly one of "agent" or "agentDefinition".`,
                   },
                 ],
-                details: makeDetails("parallel")([]),
+                details: makeEmptyDetails("parallel")([]),
                 isError: true,
               };
             }
 
+            const namedTaskAgent = inlineTaskAgent
+              ? undefined
+              : agents.find((agent) => agent.name === taskItem.agent);
+            const resolvedTaskAgent = inlineTaskAgent ?? namedTaskAgent;
+
             resolvedParallelTasks.push({
               agentName: taskItem.agent ?? inlineTaskAgent.name,
-              agentConfig: inlineTaskAgent ?? undefined,
+              agentConfig: resolvedTaskAgent,
               task: taskItem.task,
               cwd: taskItem.cwd,
               named: !inlineTaskAgent,
+              agentSource: resolvedTaskAgent?.source ?? "unknown",
+              modelDisplay: createModelDisplayState(resolvedTaskAgent?.model),
             });
           }
         }
+
+        const resolvedSingleTask =
+          params.task && (params.agent || inlineSingleAgent)
+            ? buildTaskDisplayState(
+                params.agent ?? inlineSingleAgent!.name,
+                params.task,
+                inlineSingleAgent ??
+                  agents.find((agent) => agent.name === params.agent),
+              )
+            : null;
+
+        const taskDisplays =
+          resolvedParallelTasks.length > 0
+            ? resolvedParallelTasks.map((taskItem) => ({
+                agent: taskItem.agentName,
+                agentSource: taskItem.agentSource,
+                task: taskItem.task,
+                modelDisplay: taskItem.modelDisplay,
+              }))
+            : resolvedSingleTask
+              ? [resolvedSingleTask]
+              : [];
+
+        const makeDetails = makeDetailsFactory(
+          discovery.projectAgentsDir,
+          delegationMode,
+          taskDisplays,
+        );
 
         // Security: guard project-local agents before running
         const cycleRequested = new Set<string>();
@@ -739,6 +845,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
             params.task,
             params.cwd,
             inlineSingleAgent ?? undefined,
+            resolvedSingleTask!,
             delegationMode,
             forkSessionSnapshotJsonl,
             agents,
@@ -761,7 +868,13 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
         };
       },
 
-      renderCall: (args, theme) => renderCall(args, theme),
+      renderCall: (args, theme) => {
+        const previewAgents =
+          discoveredAgents.length > 0
+            ? discoveredAgents
+            : discoverAgents(process.cwd(), "both").agents;
+        return renderCall(args, theme, buildRenderCallTasks(args, previewAgents));
+      },
       renderResult: (result, { expanded }, theme) =>
         renderResult(result, expanded, theme),
     });
@@ -776,6 +889,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
     task: string,
     cwd: string | undefined,
     agentConfig: AgentConfig | undefined,
+    taskDisplay: TaskDisplayState,
     delegationMode: DelegationMode,
     forkSessionSnapshotJsonl: string | undefined,
     agents: AgentConfig[],
@@ -791,6 +905,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
       agentConfig,
       task,
       taskCwd: cwd,
+      initialModelDisplay: taskDisplay.modelDisplay,
       delegationMode,
       forkSessionSnapshotJsonl,
       parentDepth: currentDepth,
@@ -851,12 +966,14 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
     // Initialize placeholder results for streaming
     const allResults: SingleResult[] = tasks.map((t) => ({
       agent: t.agentName,
-      agentSource: "unknown" as const,
+      agentSource: t.agentSource,
       task: t.task,
       exitCode: -1,
       messages: [],
       stderr: "",
       usage: emptyUsage(),
+      model: t.modelDisplay.text,
+      modelDisplay: t.modelDisplay,
     }));
 
     const emitProgress = () => {
@@ -895,6 +1012,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
             agentConfig: t.agentConfig,
             task: t.task,
             taskCwd: t.cwd,
+            initialModelDisplay: t.modelDisplay,
             delegationMode,
             forkSessionSnapshotJsonl,
             parentDepth: currentDepth,

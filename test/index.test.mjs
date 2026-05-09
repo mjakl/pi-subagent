@@ -35,6 +35,7 @@ function createTestableIndexModule() {
           source: "user",
           filePath: "/tmp/writer.md",
           systemPrompt: "You are writer.",
+          model: "openai/gpt-5.3-codex",
         }, {
           name: "reviewer",
           description: "Project reviewer agent",
@@ -71,8 +72,10 @@ function createTestableIndexModule() {
   );
   fs.writeFileSync(
     path.join(tmpDir, "render.js"),
-    `export function renderCall() { return []; }
-     export function renderResult() { return []; }\n`,
+    `export function renderCall(_args, _theme, taskDisplays = []) {
+      return { text: taskDisplays.map((task) => task.agent + "|" + task.modelDisplay.status + "|" + (task.modelDisplay.text ?? "(resolving model…)")).join("\\n") };
+    }
+    export function renderResult() { return []; }\n`,
   );
   fs.writeFileSync(
     path.join(tmpDir, "runner-events.js"),
@@ -117,6 +120,10 @@ function createTestableIndexModule() {
     `export const DEFAULT_DELEGATION_MODE = "spawn";
      export function emptyUsage() {
        return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
+     }
+     export function createModelDisplayState(model) {
+       const trimmed = typeof model === "string" ? model.trim() : "";
+       return trimmed ? { text: trimmed, status: "configured" } : { status: "resolving" };
      }
      export function isResultError() { return false; }
      export function isResultSuccess() { return true; }\n`,
@@ -168,6 +175,38 @@ function runSubagentTool(moduleUrl, params) {
     );
 
     process.stdout.write(JSON.stringify(result));
+  `;
+
+  return JSON.parse(
+    execFileSync(
+      "node",
+      ["--experimental-strip-types", "--input-type=module", "-e", script],
+      { encoding: "utf8" },
+    ),
+  );
+}
+
+function renderRegisteredToolCall(moduleUrl, args) {
+  const script = `
+    import extension from ${JSON.stringify(moduleUrl)};
+
+    let tool;
+    const pi = {
+      registerFlag() {},
+      on() {},
+      registerTool(def) { tool = def; },
+      getFlag() { return undefined; },
+    };
+
+    extension(pi);
+
+    const theme = {
+      fg(_color, text) { return text; },
+      bold(text) { return text; },
+    };
+
+    const rendered = tool.renderCall(${JSON.stringify(args)}, theme);
+    process.stdout.write(JSON.stringify(rendered.text));
   `;
 
   return JSON.parse(
@@ -704,6 +743,97 @@ test("top-level tasks remain exclusive with top-level agentDefinition", () => {
 
     assert.equal(result.isError, true);
     assert.match(result.content[0].text, /exactly one invocation shape|agentDefinition/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("single-mode details keep configured model metadata for named agents", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const result = runSubagentTool(moduleUrl, {
+      agent: "writer",
+      task: "Draft release notes",
+    });
+
+    assert.deepEqual(result.details.tasks, [{
+      agent: "writer",
+      agentSource: "user",
+      task: "Draft release notes",
+      modelDisplay: {
+        text: "openai/gpt-5.3-codex",
+        status: "configured",
+      },
+    }]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("parallel details keep resolving metadata for model-less inline agents", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const result = runSubagentTool(moduleUrl, {
+      tasks: [{
+        agentDefinition: {
+          name: "reviewer",
+          description: "Reviews code",
+        },
+        task: "Review this diff",
+      }],
+    });
+
+    assert.equal(result.details.tasks[0].modelDisplay.status, "resolving");
+    assert.equal(result.details.tasks[0].modelDisplay.text, undefined);
+  } finally {
+    cleanup();
+  }
+});
+
+test("registered tool renderCall receives resolved model metadata", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const preview = renderRegisteredToolCall(moduleUrl, {
+      agent: "writer",
+      task: "Draft release notes",
+    });
+
+    assert.match(preview, /writer\|configured\|openai\/gpt-5.3-codex/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("registered tool renderCall degrades gracefully for malformed single inline agentDefinition", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const preview = renderRegisteredToolCall(moduleUrl, {
+      agentDefinition: {
+        name: "   ",
+        description: "Reviews code",
+      },
+      task: "Review this diff",
+    });
+
+    assert.match(preview, /\.\.\.\|resolving/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("registered tool renderCall degrades gracefully for malformed parallel task items", () => {
+  const { moduleUrl, cleanup } = createTestableIndexModule();
+
+  try {
+    const preview = renderRegisteredToolCall(moduleUrl, {
+      tasks: [null],
+    });
+
+    assert.match(preview, /\.\.\.\|resolving/);
   } finally {
     cleanup();
   }

@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isResultError, isResultSuccess, normalizeCompletedResult } from "../types.ts";
+import {
+  createModelDisplayState,
+  getModelDisplayText,
+  isResultError,
+  isResultSuccess,
+  normalizeCompletedResult,
+} from "../types.ts";
 
 function makeResult(overrides = {}) {
   return {
@@ -10,6 +16,7 @@ function makeResult(overrides = {}) {
     exitCode: -1,
     messages: [],
     stderr: "",
+    modelDisplay: { status: "resolving" },
     usage: {
       input: 0,
       output: 0,
@@ -118,4 +125,16 @@ test("running results are neither success nor error", () => {
 
   assert.equal(isResultSuccess(result), false);
   assert.equal(isResultError(result), false);
+});
+
+test("createModelDisplayState returns configured and resolving display states", () => {
+  assert.deepEqual(createModelDisplayState("openai/gpt-5.3-codex"), {
+    text: "openai/gpt-5.3-codex",
+    status: "configured",
+  });
+  assert.deepEqual(createModelDisplayState(), { status: "resolving" });
+  assert.equal(
+    getModelDisplayText(createModelDisplayState()),
+    "(resolving model…)"
+  );
 });
