@@ -43,6 +43,9 @@ test("package files include README demo GIF asset", () => {
 });
 
 test("npm pack dry-run includes README demo GIF asset in packed files", () => {
+  const pkg = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"),
+  );
   const output = execFileSync("npm", ["pack", "--dry-run", "--json"], {
     cwd: repoRoot,
     encoding: "utf8",
@@ -51,9 +54,10 @@ test("npm pack dry-run includes README demo GIF asset in packed files", () => {
   const packResult = JSON.parse(output);
   assert.ok(Array.isArray(packResult));
 
-  const packedPaths = packResult
-    .flatMap((entry) => (Array.isArray(entry.files) ? entry.files : []))
-    .map((file) => file.path);
+  const packedEntry = packResult.find((entry) => entry?.name === pkg.name);
+  assert.ok(packedEntry, `expected npm pack output for package ${pkg.name}`);
+  assert.ok(Array.isArray(packedEntry.files));
 
+  const packedPaths = packedEntry.files.map((file) => file.path);
   assert.ok(packedPaths.includes("docs/assets/subagent-demo.gif"));
 });
