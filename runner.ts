@@ -101,15 +101,15 @@ function buildPiArgs(
   const thinking = agent.thinking ?? inheritedCliArgs.fallbackThinking;
   if (thinking) args.push("--thinking", thinking);
 
-  if (agent.tools && agent.tools.length > 0) {
-    args.push("--tools", agent.tools.join(","));
-  } else if (agent.tools === undefined) {
-    if (inheritedCliArgs.fallbackTools !== undefined) {
-      args.push("--tools", inheritedCliArgs.fallbackTools);
-    } else if (inheritedCliArgs.fallbackNoTools) {
-      args.push("--no-tools");
-    }
+  // Always inherit the parent's tools by default.
+  // Sub-agents must have the same tool set as the parent to preserve KV cache.
+  // Agent-defined tools are ignored (they're brittle and don't track extension changes).
+  // Never pass --no-tools: sub-agents always get all available tools.
+  if (inheritedCliArgs.fallbackTools !== undefined) {
+    args.push("--tools", inheritedCliArgs.fallbackTools);
   }
+  // If parent didn't have --tools, don't pass any --tools flag.
+  // Pi will load all available tools (built-in + extensions) by default.
 
   // NO --append-system-prompt! The sub-agent inherits the main agent's
   // system prompt (Pi default + APPEND_SYSTEM.md) automatically.

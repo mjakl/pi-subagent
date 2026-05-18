@@ -354,42 +354,10 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
-	// Inject available agents into the system prompt
-	// NOTE: We do NOT inject sub-agent instructions that modify the system prompt.
-	// The system prompt must remain unchanged to preserve KV cache stability.
-	pi.on("before_agent_start", async (event) => {
-		if (!canDelegate) return;
-		if (discoveredAgents.length === 0) return;
-
-		const agentList = discoveredAgents
-			.map((a) => `- **${a.name}**: ${a.description}`)
-			.join("\n");
-		return {
-			systemPrompt:
-				event.systemPrompt +
-				`\n\n## Available Subagents
-
-The following subagents are available via the \`subagent\` tool:
-
-${agentList}
-
-### How to call the subagent tool
-
-Each subagent runs in an **isolated process** and inherits your **full session context**.
-
-**Single mode** — delegate one task:
-\`\`\`json
-{ "agent": "agent-name", "task": "Detailed task..." }
-\`\`\`
-
-### Runtime delegation guards
-
-- Max depth: current depth ${currentDepth}, max depth ${maxDepth}
-- Cycle prevention: ${preventCycles ? "enabled" : "disabled"}
-- Current delegation stack: ${ancestorAgentStack.length > 0 ? ancestorAgentStack.join(" -> ") : "(root)"}
-`,
-		};
-	});
+	// REMOVED: before_agent_start handler that appended "## Available Subagents"
+	// to the system prompt. This modified the system prompt dynamically, breaking
+	// KV cache stability. Agent discovery info is now communicated via the tool
+	// description instead.
 
 	// Register the subagent tool
 	if (canDelegate) {
