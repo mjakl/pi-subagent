@@ -5,8 +5,8 @@
  */
 
 import * as os from "node:os";
-import { getMarkdownTheme } from "@mariozechner/pi-coding-agent";
-import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
+import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { getResultSummaryText } from "./runner-events.js";
 import {
 	type DisplayItem,

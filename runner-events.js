@@ -75,14 +75,33 @@ function addAssistantMessages(result, messages) {
   return changed;
 }
 
-export function processPiEvent(event, result) {
+export function processPiEvent(event, result, opts) {
+  const { stdin, injectMessage, onMaxTurns } = opts || {};
+
   if (!event || typeof event !== "object") return false;
 
   // Check max turns limit before processing new events
   if (result.maxTurns && result.usage.turns >= result.maxTurns) {
+    result.maxTurns = true;
     result.stopReason = "max_turns";
     result.errorMessage = `Sub-agent exceeded maximum turns (${result.maxTurns})`;
     result.stderr = `Sub-agent exceeded maximum turns (${result.maxTurns})`;
+
+    // Inject summary message into the running sub-agent via stdin
+    if (!getInjectedFlag(result, "__maxTurnsInjected") && injectMessage) {
+      setInjectedFlag(result, "__maxTurnsInjected", true);
+      try {
+        const summaryMsg = `You have reached your maximum number of turns (${result.maxTurns}). Please summarize what you did, where you stopped at, next steps, and anything relevant for the main agent.`;
+        injectMessage(summaryMsg);
+      } catch (e) {
+        /* ignore injection errors */
+      }
+    }
+
+    // Notify runner to terminate the child process
+    if (onMaxTurns) {
+      onMaxTurns();
+    }
     return false;
   }
 
@@ -119,7 +138,24 @@ export function processPiEvent(event, result) {
   }
 }
 
-export function processPiJsonLine(line, result) {
+// Track whether a summary message was injected for max turns / timeout
+export function getInjectedFlag(result, key) {
+  if (!Object.prototype.hasOwnProperty.call(result, key)) {
+    Object.defineProperty(result, key, {
+      value: false,
+      enumerable: false,
+      configurable: false,
+      writable: true,
+    });
+  }
+  return result[key];
+}
+
+export function setInjectedFlag(result, key, value) {
+  result[key] = value;
+}
+
+export function processPiJsonLine(line, result, opts) {
   if (!line.trim()) return false;
 
   let event;
@@ -129,7 +165,7 @@ export function processPiJsonLine(line, result) {
     return false;
   }
 
-  return processPiEvent(event, result);
+  return processPiEvent(event, result, opts);
 }
 
 export function getFinalAssistantText(messages) {

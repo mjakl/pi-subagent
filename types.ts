@@ -6,7 +6,7 @@
  * sub-agents (enforced at the runner level).
  */
 
-import type { Message } from "@mariozechner/pi-ai";
+import type { Message } from "@earendil-works/pi-ai";
 import { getFinalAssistantText } from "./runner-events.js";
 
 /** Aggregated token usage from a subagent run. */
@@ -36,6 +36,9 @@ export interface SingleResult {
 	sawAgentEnd?: boolean;
 	timeout?: boolean;
 	maxTurns?: boolean;
+	/** Whether a summary message was injected before termination. */
+	__maxTurnsInjected?: boolean;
+	__timeoutInjected?: boolean;
 }
 
 /** Metadata attached to every tool result for rendering. */

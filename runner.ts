@@ -15,9 +15,9 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { parseInheritedCliArgs } from "./runner-cli.js";
-import { processPiJsonLine } from "./runner-events.js";
+import { processPiJsonLine, getInjectedFlag, setInjectedFlag } from "./runner-events.js";
 import {
   type SingleResult,
   emptyUsage,
@@ -216,7 +216,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
       proc.stdin.on("error", () => {
         /* ignore broken pipe on fast exits */
       });
-      proc.stdin.end();
+      // Keep stdin open — we may need to inject messages on timeout/maxTurns
 
       let buffer = "";
       let didClose = false;
@@ -264,9 +264,40 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
         resolve(code);
       };
 
+      // Helper: inject a user message into the child process via stdin
+      const injectMessageIntoStdin = (message: string) => {
+        if (didClose || settled || !proc.stdin) return;
+        try {
+          proc.stdin.write(message + "\n");
+        } catch {
+          /* pipe may be broken */
+        }
+      };
+
+      // Helper: check if the child process is still alive and actively working
+      const isChildAlive = (): boolean => {
+        if (didClose || settled) return false;
+        // If we've seen agent_end, the child has semantically finished
+        if (result.sawAgentEnd) return false;
+        // If the process has exited but we haven't processed the close event yet
+        return true;
+      };
+
+      // Helper: handle max turns — terminate child and finish
+      let maxTurnsTerminationScheduled = false;
+      const handleMaxTurns = () => {
+        if (maxTurnsTerminationScheduled || didClose || settled) return;
+        maxTurnsTerminationScheduled = true;
+        exceededMaxTurns = true;
+        terminateChild();
+        setTimeout(() => {
+          if (!settled) finish(1);
+        }, SIGKILL_TIMEOUT_MS + 500);
+      };
+
       const flushLine = (line: string) => {
         if (exceededMaxTurns) return;
-        if (processPiJsonLine(line, result)) emitUpdate();
+        if (processPiJsonLine(line, result, { stdin: proc.stdin, injectMessage: injectMessageIntoStdin, onMaxTurns: handleMaxTurns })) emitUpdate();
         maybeFinishFromAgentEnd();
       };
 
@@ -316,6 +347,18 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
         result.stopReason = "timeout";
         result.errorMessage = `Sub-agent timed out after ${timeout / 1000}s`;
         result.stderr = `Sub-agent timed out after ${timeout / 1000}s`;
+
+        // Try to inject a summary message before terminating
+        if (isChildAlive() && !getInjectedFlag(result, "__timeoutInjected")) {
+          setInjectedFlag(result, "__timeoutInjected", true);
+          try {
+            const summaryMsg = `You have reached your time limit. Please summarize what you did, where you stopped at, next steps, and anything relevant for the main agent.`;
+            injectMessageIntoStdin(summaryMsg);
+          } catch {
+            /* ignore injection errors */
+          }
+        }
+
         terminateChild();
         setTimeout(() => {
           if (!settled) finish(124);

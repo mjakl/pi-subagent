@@ -13,7 +13,7 @@
  * remains valid because the system prompt is never modified (auto-injected constant text only).
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { renderCall, renderResult } from "./render.js";
 import { getFinalAssistantText, getResultSummaryText } from "./runner-events.js";
