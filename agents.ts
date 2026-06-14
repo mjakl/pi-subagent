@@ -42,15 +42,15 @@ export interface StarterAgentDiscoveryResult {
 	error?: string;
 }
 
-export const STARTER_AGENT_NAME = "explorer";
-export const STARTER_AGENT_FILE_NAME = "explorer.md";
+export const STARTER_AGENT_NAME = "explore";
+export const STARTER_AGENT_FILE_NAME = "explore.md";
 
 const STARTER_AGENT_MARKDOWN = `---
-name: explorer
+name: explore
 description: Read-only codebase exploration specialist for focused searches, repository reconnaissance, and evidence-backed summaries. Use when you need fast context from files without edits.
 tools: read, grep, find, ls
 sessionPreference: persistent
-sessionHint: Prefer a topic-specific named session for iterative exploration; use ephemeral calls for one-off or parallel independent searches.
+sessionHint: Prefer a topic-specific named session for iterative codebase exploration, e.g. session="explore-auth". Use ephemeral calls for one-off or parallel independent searches.
 ---
 
 You are a codebase exploration specialist. Your job is to quickly gather reliable,
@@ -223,8 +223,8 @@ function mergeAgents(...groups: AgentConfig[][]): AgentConfig[] {
 
 function getStarterAgentFileName(attempt: number): string {
 	if (attempt === 0) return STARTER_AGENT_FILE_NAME;
-	if (attempt === 1) return "explorer-starter.md";
-	return `explorer-starter-${attempt}.md`;
+	if (attempt === 1) return "explore-starter.md";
+	return `explore-starter-${attempt}.md`;
 }
 
 function isFileExistsError(err: unknown): boolean {

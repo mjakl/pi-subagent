@@ -181,7 +181,7 @@ test("parses optional session guidance from agent frontmatter", () => {
   }
 });
 
-test("creates a starter explorer agent when no agents are found", () => {
+test("creates a starter explore agent when no agents are found", () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-agents-fixture-"));
   const homeDir = path.join(tmpDir, "home");
   const configDir = path.join(tmpDir, "override-config");
@@ -193,19 +193,19 @@ test("creates a starter explorer agent when no agents are found", () => {
       PI_CODING_AGENT_DIR: configDir,
     });
 
-    const expectedPath = path.join(configDir, "agents", "explorer.md");
+    const expectedPath = path.join(configDir, "agents", "explore.md");
     assert.equal(result.createdAgentPath, expectedPath);
     assert.equal(result.error, undefined);
     assert.deepEqual(
       result.discovery.agents.map((agent) => ({ name: agent.name, source: agent.source, tools: agent.tools })),
-      [{ name: "explorer", source: "user", tools: ["read", "grep", "find", "ls"] }],
+      [{ name: "explore", source: "user", tools: ["read", "grep", "find", "ls"] }],
     );
 
     const content = fs.readFileSync(expectedPath, "utf-8");
-    assert.match(content, /name: explorer/);
+    assert.match(content, /name: explore/);
     assert.match(content, /tools: read, grep, find, ls/);
     assert.match(content, /sessionPreference: persistent/);
-    assert.match(content, /sessionHint: Prefer a topic-specific named session/);
+    assert.match(content, /sessionHint: Prefer a topic-specific named session for iterative codebase exploration, e\.g\. session="explore-auth"\. Use ephemeral calls for one-off or parallel independent searches\./);
   } finally {
     cleanup();
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -240,7 +240,7 @@ test("does not create a starter agent when a project agent exists", () => {
   }
 });
 
-test("starter creation does not overwrite an existing explorer file", () => {
+test("starter creation does not overwrite an existing explore file", () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-agents-fixture-"));
   const homeDir = path.join(tmpDir, "home");
   const configDir = path.join(tmpDir, "override-config");
@@ -248,7 +248,7 @@ test("starter creation does not overwrite an existing explorer file", () => {
   const { moduleUrl, cleanup } = createTestableAgentsModule();
 
   fs.mkdirSync(agentsDir, { recursive: true });
-  fs.writeFileSync(path.join(agentsDir, "explorer.md"), "not a valid agent\n");
+  fs.writeFileSync(path.join(agentsDir, "explore.md"), "not a valid agent\n");
 
   try {
     const result = runDiscoverAgentsWithStarter(moduleUrl, tmpDir, {
@@ -256,12 +256,12 @@ test("starter creation does not overwrite an existing explorer file", () => {
       PI_CODING_AGENT_DIR: configDir,
     });
 
-    const expectedPath = path.join(agentsDir, "explorer-starter.md");
+    const expectedPath = path.join(agentsDir, "explore-starter.md");
     assert.equal(result.createdAgentPath, expectedPath);
-    assert.equal(fs.readFileSync(path.join(agentsDir, "explorer.md"), "utf-8"), "not a valid agent\n");
+    assert.equal(fs.readFileSync(path.join(agentsDir, "explore.md"), "utf-8"), "not a valid agent\n");
     assert.deepEqual(
       result.discovery.agents.map((agent) => ({ name: agent.name, source: agent.source })),
-      [{ name: "explorer", source: "user" }],
+      [{ name: "explore", source: "user" }],
     );
   } finally {
     cleanup();

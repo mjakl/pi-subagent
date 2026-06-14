@@ -64,10 +64,10 @@ Project agents win on name conflicts. They are repo-controlled configuration and
 
 ### Starter Agent
 
-If no user or project subagents can be found, `pi-subagent` creates a starter user agent named `explorer` in the active user agents directory:
+If no user or project subagents can be found, `pi-subagent` creates a starter user agent named `explore` in the active user agents directory:
 
-- `~/.pi/agent/agents/explorer.md` by default
-- `$PI_CODING_AGENT_DIR/agents/explorer.md` when `PI_CODING_AGENT_DIR` is set
+- `~/.pi/agent/agents/explore.md` by default
+- `$PI_CODING_AGENT_DIR/agents/explore.md` when `PI_CODING_AGENT_DIR` is set
 
 The starter is read-only (`read`, `grep`, `find`, `ls`) and is meant for focused codebase exploration. It includes an advisory preference for topic-specific persistent sessions so follow-up exploration can reuse context. Existing files are never overwritten.
 
@@ -84,7 +84,7 @@ A good default for fast codebase reconnaissance. It prefers named sessions becau
 name: explore
 description: Codebase exploration specialist for focused searches and evidence-backed summaries.
 sessionPreference: persistent
-sessionHint: Prefer a topic-specific named session for iterative exploration; use ephemeral calls for one-off searches.
+sessionHint: Prefer a topic-specific named session for iterative codebase exploration, e.g. session="explore-auth". Use ephemeral calls for one-off or parallel independent searches.
 ---
 
 You are a codebase exploration specialist. Find the relevant files, symbols, and tests for the request. Return concise findings with file paths and line references.
@@ -160,7 +160,7 @@ The tool is named `subagent` and accepts one top-level `calls` array. Use the sa
 {
   "calls": [
     {
-      "agent": "explorer",
+      "agent": "explore",
       "prompt": "Find where authentication is implemented."
     }
   ]
@@ -185,7 +185,7 @@ Each call supports:
 {
   "calls": [
     {
-      "agent": "explorer",
+      "agent": "explore",
       "prompt": "Find where authentication is implemented."
     }
   ]

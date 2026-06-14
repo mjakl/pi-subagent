@@ -11,7 +11,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { type ExtensionAPI, SessionManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { type AgentConfig, discoverAgentsWithStarter } from "./agents.js";
+import { type AgentConfig, STARTER_AGENT_NAME, discoverAgentsWithStarter } from "./agents.js";
 import {
   CALLS_SCHEMA_DESCRIPTION,
   formatAvailableSubagentsPrompt,
@@ -629,7 +629,7 @@ export default function (pi: ExtensionAPI) {
     if (ctx.hasUI) {
       if (starterDiscovery.createdAgentPath) {
         ctx.ui.notify(
-          `Created starter subagent "explorer" at:\n${starterDiscovery.createdAgentPath}\n\nEdit this file or add more agents in the same directory to customize delegation.`,
+          `Created starter subagent "${STARTER_AGENT_NAME}" at:\n${starterDiscovery.createdAgentPath}\n\nEdit this file or add more agents in the same directory to customize delegation.`,
           "info",
         );
       } else if (starterDiscovery.error && discoveredAgents.length === 0) {
