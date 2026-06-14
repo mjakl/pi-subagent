@@ -141,6 +141,46 @@ test("project agents override the active user config directory", () => {
   }
 });
 
+test("parses optional session guidance from agent frontmatter", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-agents-fixture-"));
+  const homeDir = path.join(tmpDir, "home");
+  const configDir = path.join(tmpDir, "override-config");
+  const agentsDir = path.join(configDir, "agents");
+  const { moduleUrl, cleanup } = createTestableAgentsModule();
+
+  fs.mkdirSync(agentsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(agentsDir, "explore.md"),
+    `---\nname: explore\ndescription: Explore code\nsessionPreference: persistent\nsessionHint: Prefer topic-specific named sessions for follow-up searches.\n---\n\nYou are explore.\n`,
+  );
+  fs.writeFileSync(
+    path.join(agentsDir, "hint-only.md"),
+    `---\nname: hint-only\ndescription: Hint only\nsessionHint: Use a named session only after the first broad pass.\n---\n\nYou are hint-only.\n`,
+  );
+
+  try {
+    const discovery = runDiscoverAgents(moduleUrl, tmpDir, "user", {
+      HOME: homeDir,
+      PI_CODING_AGENT_DIR: configDir,
+    });
+
+    const byName = new Map(discovery.agents.map((agent) => [agent.name, agent]));
+    assert.equal(byName.get("explore")?.sessionPreference, "persistent");
+    assert.equal(
+      byName.get("explore")?.sessionHint,
+      "Prefer topic-specific named sessions for follow-up searches.",
+    );
+    assert.equal(byName.get("hint-only")?.sessionPreference, undefined);
+    assert.equal(
+      byName.get("hint-only")?.sessionHint,
+      "Use a named session only after the first broad pass.",
+    );
+  } finally {
+    cleanup();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test("creates a starter explorer agent when no agents are found", () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-agents-fixture-"));
   const homeDir = path.join(tmpDir, "home");
@@ -164,6 +204,8 @@ test("creates a starter explorer agent when no agents are found", () => {
     const content = fs.readFileSync(expectedPath, "utf-8");
     assert.match(content, /name: explorer/);
     assert.match(content, /tools: read, grep, find, ls/);
+    assert.match(content, /sessionPreference: persistent/);
+    assert.match(content, /sessionHint: Prefer a topic-specific named session/);
   } finally {
     cleanup();
     fs.rmSync(tmpDir, { recursive: true, force: true });

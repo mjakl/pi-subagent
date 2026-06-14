@@ -278,7 +278,7 @@ If no user or project subagents can be found, `pi-subagent` creates a starter us
 - `~/.pi/agent/agents/explorer.md` by default
 - `$PI_CODING_AGENT_DIR/agents/explorer.md` when `PI_CODING_AGENT_DIR` is set
 
-The starter is read-only (`read`, `grep`, `find`, `ls`) and is meant for focused codebase exploration. Existing files are never overwritten.
+The starter is read-only (`read`, `grep`, `find`, `ls`) and is meant for focused codebase exploration. It includes an advisory preference for topic-specific persistent sessions so follow-up exploration can reuse context. Existing files are never overwritten.
 
 ### Example Agent
 
@@ -289,6 +289,8 @@ description: Expert technical writer and editor
 model: anthropic/claude-3-5-sonnet
 thinking: medium
 tools: read, write
+sessionPreference: either
+sessionHint: Use a named session for multi-turn editing plans; use ephemeral calls for one-off copy edits.
 ---
 
 You are an expert technical writer. Improve clarity and concision while preserving technical accuracy.
@@ -303,10 +305,14 @@ You are an expert technical writer. Improve clarity and concision while preservi
 | `model` | No | Parent/default Pi model | Overrides the model for this agent. Supports provider-prefixed values such as `anthropic/claude-3-5-sonnet`. |
 | `thinking` | No | Parent/default Pi thinking level | Sets the thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`). |
 | `tools` | No | `read,bash,edit,write` | Comma-separated list of built-in tools to enable for this agent. |
+| `sessionPreference` | No | — | Advisory machine-readable hint for the main agent. One of `ephemeral`, `persistent`, or `either`. |
+| `sessionHint` | No | — | Advisory free-form guidance shown to the main agent when choosing whether to pass `session`. |
 
 Notes:
 
 - `tools` controls built-in tools. Extension tools remain available unless extensions are disabled.
+- `sessionPreference` and `sessionHint` only guide the main agent. They do not automatically create, require, or name persistent sessions.
+- `sessionHint` can be used by itself for free-form guidance; the extension does not infer `sessionPreference` from it.
 - The Markdown body becomes the agent's system prompt and is appended to Pi's default system prompt.
 - Agent files are read when the tool runs; continued named sessions use the current definition of the agent name.
 
@@ -339,6 +345,7 @@ The main agent receives a concise text summary for each subagent call. Tool call
 - **Auto-Discovery** — Agents are found at startup and listed in the main agent's system prompt.
 - **Unified Calls API** — One schema for one or many subagent calls.
 - **Named Persistent Sessions** — Continue specialist subagents across multiple turns.
+- **Agent Session Guidance** — Agent definitions can advise when persistent or ephemeral calls fit best.
 - **Per-Call Initial Context** — Each call chooses empty or parent-seeded creation.
 - **Depth + Cycle Guards** — Prevent runaway recursive delegation.
 - **Streaming Updates** — Watch progress in real time.

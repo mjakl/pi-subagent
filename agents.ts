@@ -2,7 +2,7 @@
  * Agent discovery and configuration.
  *
  * Agents are Markdown files with YAML frontmatter that define name, description,
- * optional model/tools, and a system prompt body.
+ * optional model/tools/session guidance, and a system prompt body.
  *
  * Lookup locations:
  *   - User agents:    ~/.pi/agent/agents/*.md by default, or
@@ -16,6 +16,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 export type AgentScope = "user" | "project" | "both";
+export type SessionPreference = "ephemeral" | "persistent" | "either";
 
 export interface AgentConfig {
 	name: string;
@@ -23,6 +24,8 @@ export interface AgentConfig {
 	tools?: string[];
 	model?: string;
 	thinking?: string;
+	sessionPreference?: SessionPreference;
+	sessionHint?: string;
 	systemPrompt: string;
 	source: "user" | "project";
 	filePath: string;
@@ -46,6 +49,8 @@ const STARTER_AGENT_MARKDOWN = `---
 name: explorer
 description: Read-only codebase exploration specialist for focused searches, repository reconnaissance, and evidence-backed summaries. Use when you need fast context from files without edits.
 tools: read, grep, find, ls
+sessionPreference: persistent
+sessionHint: Prefer a topic-specific named session for iterative exploration; use ephemeral calls for one-off or parallel independent searches.
 ---
 
 You are a codebase exploration specialist. Your job is to quickly gather reliable,
@@ -83,6 +88,39 @@ Keep the response concise, structured, and optimized for agent handoff.
 
 function isDirectory(p: string): boolean {
 	try { return fs.statSync(p).isDirectory(); } catch { return false; }
+}
+
+function parseSessionPreference(raw: unknown, filePath: string): SessionPreference | undefined {
+	if (raw === undefined) return undefined;
+	if (typeof raw !== "string") {
+		console.warn(
+			`[pi-subagent] Ignoring invalid sessionPreference field in "${filePath}". Expected "ephemeral", "persistent", or "either".`,
+		);
+		return undefined;
+	}
+
+	const normalized = raw.trim().toLowerCase();
+	if (normalized === "ephemeral" || normalized === "persistent" || normalized === "either") {
+		return normalized;
+	}
+
+	console.warn(
+		`[pi-subagent] Ignoring invalid sessionPreference field in "${filePath}". Expected "ephemeral", "persistent", or "either".`,
+	);
+	return undefined;
+}
+
+function parseSessionHint(raw: unknown, filePath: string): string | undefined {
+	if (raw === undefined) return undefined;
+	if (typeof raw !== "string") {
+		console.warn(
+			`[pi-subagent] Ignoring invalid sessionHint field in "${filePath}". Expected a string.`,
+		);
+		return undefined;
+	}
+
+	const trimmed = raw.trim();
+	return trimmed.length > 0 ? trimmed : undefined;
 }
 
 export function getUserAgentsDir(): string {
@@ -148,6 +186,8 @@ function parseAgentFile(filePath: string, source: "user" | "project"): AgentConf
 		tools,
 		model: typeof frontmatter.model === "string" ? frontmatter.model : undefined,
 		thinking: typeof frontmatter.thinking === "string" ? frontmatter.thinking : undefined,
+		sessionPreference: parseSessionPreference(frontmatter.sessionPreference, filePath),
+		sessionHint: parseSessionHint(frontmatter.sessionHint, filePath),
 		systemPrompt: body,
 		source,
 		filePath,

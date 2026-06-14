@@ -444,6 +444,32 @@ function formatSessionDisplayName(agentName: string, sessionHandle: string): str
   return `subagent: ${agentName} · ${oneLine(sessionHandle)}`;
 }
 
+function formatSessionPreference(preference: AgentConfig["sessionPreference"]): string {
+  switch (preference) {
+    case "persistent":
+      return "Prefer topic-specific named persistent sessions when context should carry across related calls.";
+    case "ephemeral":
+      return "Prefer ephemeral calls unless the caller explicitly needs continuation.";
+    case "either":
+      return "Choose ephemeral or persistent sessions based on the task.";
+    default:
+      return "";
+  }
+}
+
+function formatAgentForPrompt(agent: AgentConfig): string {
+  const lines = [`- **${agent.name}**: ${agent.description}`];
+  if (agent.sessionPreference) {
+    lines.push(
+      `  Session preference: ${agent.sessionPreference} — ${formatSessionPreference(agent.sessionPreference)}`,
+    );
+  }
+  if (agent.sessionHint) {
+    lines.push(`  Session hint: ${oneLine(agent.sessionHint)}`);
+  }
+  return lines.join("\n");
+}
+
 function attachSessionIdentities(calls: NormalizedCall[], parentSessionId: string): void {
   for (const call of calls) {
     if (!call.sessionHandle) continue;
@@ -693,7 +719,7 @@ export default function (pi: ExtensionAPI) {
     if (discoveredAgents.length === 0) return;
 
     const agentList = discoveredAgents
-      .map((a) => `- **${a.name}**: ${a.description}`)
+      .map((a) => formatAgentForPrompt(a))
       .join("\n");
     return {
       systemPrompt:
@@ -733,6 +759,7 @@ Fields:
 Rules:
 - Do not use the same resolved session in more than one concurrent call. Same handle + same agent + same cwd conflicts; same handle + different agent is allowed. If a stale session lock is reported, remove the lock directory only after confirming no subagent is still running.
 - Use \`session\` for multi-turn specialist work; omit it for one-off delegation, when the parent is running with \`--no-session\`, or from temporary parent-seeded subagent sessions.
+- Agent-specific session preference and hint lines are advisory only. The tool creates or continues a persistent session only when you include \`session\` in the call.
 
 ### Runtime delegation guards
 
@@ -764,6 +791,8 @@ Rules:
         "    The same handle with different agents resolves to different sessions.",
         "    Requires a persisted parent Pi session; omit it when the parent uses --no-session or this process is a temporary parent-seeded subagent session.",
         "  cwd: optional working directory for that subagent process.",
+        "",
+        "Agent definitions may include advisory session preference/hint text. The tool creates or continues a persistent session only when a call includes `session`.",
         "",
         "Multiple calls may run concurrently. A persistent session may be used by only one running call at a time; stale lock errors require manual cleanup after confirming no subagent is still running.",
         "",
