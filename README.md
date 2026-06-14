@@ -4,44 +4,46 @@
 
 There are many subagent extensions for Pi; this one is mine.
 
-## Why Pi Subagent
+## User Guide
+
+### Why Pi Subagent
 
 **Specialization** — Use tailored agents for review, research, testing, documentation, exploration, and other focused work.
 
-**Flexible Context** — Start a child conversation empty, or seed a newly-created child conversation from the current parent session.
+**Flexible Context** — Let specialists start fresh, or give them the current conversation when that helps.
 
-**Named Continuation** — Give a subagent call a logical `session` handle and continue that same specialist conversation later.
+**Named Continuation** — Continue the same specialist conversation later for multi-step work.
 
-**Parallel Execution** — Run one or many subagent calls with the same `calls` API.
+**Parallel Execution** — Let the main agent ask multiple specialists at the same time.
 
-**Small Surface Area** — The extension keeps delegation explicit: choose an agent, send a prompt, optionally name the session.
+**Small Surface Area** — Install the extension, define agents as Markdown, and let the main Pi agent handle delegation.
 
-## Features
+### Features
 
 - **Auto-Discovery** — Agents are found at startup and listed in the main agent's system prompt.
-- **Unified Calls API** — One schema for one or many subagent calls.
-- **Named Persistent Sessions** — Continue specialist subagents across multiple turns.
+- **Unified Delegation** — One extension handles one specialist call or many parallel calls.
+- **Named Persistent Sessions** — Continue specialist subagents across multiple turns when useful.
 - **Agent Session Guidance** — Agent definitions can advise when persistent or ephemeral calls fit best.
-- **Per-Call Initial Context** — Each call chooses empty or parent-seeded creation.
+- **Context Control** — A subagent can start fresh or from the parent conversation snapshot.
 - **Depth + Cycle Guards** — Prevent runaway recursive delegation.
 - **Streaming Updates** — Watch progress in real time.
 - **Rich TUI Rendering** — Collapsed/expanded views with usage stats, tool calls, markdown output, and session metadata.
 
-## Install
+### Install
 
-### Option 1: Install from npm (recommended)
+#### Option 1: Install from npm (recommended)
 
 ```bash
 pi install npm:@mjakl/pi-subagent
 ```
 
-### Option 2: Install via git
+#### Option 2: Install via git
 
 ```bash
 pi install git:github.com/mjakl/pi-subagent
 ```
 
-### Option 3: Manual Installation
+#### Option 3: Manual Installation
 
 Clone this repository to your Pi extensions directory:
 
@@ -52,7 +54,22 @@ cd pi-subagent
 npm install
 ```
 
-## Subagent Definitions
+### Using Pi Subagent
+
+Once installed, use Pi normally. Ask the main agent for work that benefits from a specialist, such as "review this diff" or "find where authentication is implemented." The main agent decides when to delegate, runs the subagent, and folds the result back into your conversation.
+
+You do not need to call `subagent`, write JSON, or interact with tools directly.
+
+What to expect:
+
+- Delegated work appears in the TUI with streaming progress and expandable details.
+- Each subagent runs in its own isolated `pi` process.
+- If you have no agents yet, `pi-subagent` creates a starter `explore` agent automatically.
+- Customize agents only when you want different or additional specialists.
+
+### Customizing Subagents
+
+pi-subagent works out of the box — on first run it creates a starter `explore` agent for you. Customize it only if you want different or additional specialists.
 
 Subagents are defined as Markdown files with YAML frontmatter.
 
@@ -62,7 +79,7 @@ Subagents are defined as Markdown files with YAML frontmatter.
 
 Project agents win on name conflicts. They are repo-controlled configuration and are discovered, advertised to the main agent, and executed like user agents. Use project agents only in repositories you trust.
 
-### Starter Agent
+#### Starter Agent
 
 If no user or project subagents can be found, `pi-subagent` creates a starter user agent named `explore` in the active user agents directory:
 
@@ -71,11 +88,11 @@ If no user or project subagents can be found, `pi-subagent` creates a starter us
 
 The starter is read-only (`read`, `grep`, `find`, `ls`) and is meant for focused codebase exploration. It includes an advisory preference for topic-specific persistent sessions so follow-up exploration can reuse context. Existing files are never overwritten.
 
-### Small Example Agents
+#### Example Agents
 
 Small, focused definitions work best. The `description` helps the main agent choose a subagent; the Markdown body is the subagent's extra system prompt.
 
-#### explore
+##### explore
 
 A good default for fast codebase reconnaissance. It prefers named sessions because exploration often has follow-up questions.
 
@@ -90,7 +107,7 @@ sessionHint: Prefer a topic-specific named session for iterative codebase explor
 You are a codebase exploration specialist. Find the relevant files, symbols, and tests for the request. Return concise findings with file paths and line references.
 ```
 
-#### review
+##### review
 
 A useful complement to `explore`: stateless by default, judgment-oriented, and configured for deeper reasoning.
 
@@ -106,7 +123,7 @@ sessionHint: Use ephemeral calls for independent reviews; use a named session on
 You review code changes. Focus on substantive issues, cite files and lines, and distinguish confirmed problems from suggestions. Keep the report concise.
 ```
 
-### Frontmatter Fields
+#### Frontmatter Fields
 
 | Field | Required | Default | Description |
 | --- | --- | --- | --- |
@@ -126,7 +143,7 @@ Notes:
 - The Markdown body becomes the agent's system prompt and is appended to Pi's default system prompt.
 - Agent files are read when the tool runs; continued named sessions use the current definition of the agent name.
 
-### Available Built-in Tools
+#### Available Built-in Tools
 
 Available tools by default: `read`, `bash`, `edit`, `write`.
 
@@ -138,7 +155,13 @@ Optional built-in tools:
 
 For a read-only agent, use `tools: read,find,ls,grep`.
 
-## How Communication Works
+---
+
+## Technical Reference
+
+These sections document the `subagent` tool interface and runtime behavior. They are for advanced users, extension authors, and maintainers — you do not need them for everyday use.
+
+### How Subagents Run
 
 Each subagent runs in a separate `pi` process:
 
@@ -150,9 +173,7 @@ Each subagent runs in a separate `pi` process:
 
 The main agent receives a concise text summary for each subagent call. Tool calls, usage, generated session IDs, and creation metadata are available to the TUI and tool result details; the text summary includes only the logical `session` handle in the call header when one was provided.
 
-## Tool API
-
-**Note:** This is reference documentation for the Pi agent/tool interface. Users do not need to call `subagent`, write JSON, or interact with the tools in any way; the main Pi agent invokes the tool when it delegates work.
+### Tool API
 
 The tool is named `subagent` and accepts one top-level `calls` array. Use the same shape for one call and many calls.
 
@@ -176,8 +197,6 @@ Each call supports:
 | `cwd` | No | Parent cwd | Working directory for this subagent process. |
 | `initialContext` | No | `"empty"` | `"empty"` starts a newly-created child conversation without parent history. `"parent"` seeds a newly-created child conversation from the current parent session snapshot. Existing named sessions ignore this field. |
 | `session` | No | — | Logical handle for a persistent child Pi session. Use this for multi-turn specialist work. Requires a persisted parent Pi session. |
-
-### Examples
 
 #### One ephemeral call
 
@@ -256,7 +275,7 @@ Continue the same specialist conversation later:
 
 If the named session already exists, the subagent continues it and `initialContext` is ignored. If it does not exist, the new child session is seeded from the parent snapshot.
 
-## Named Session Semantics
+### Named Session Semantics
 
 A `session` value is a logical handle, not a Pi display name and not a raw Pi session ID.
 
@@ -290,7 +309,7 @@ Important rules:
 - Named child sessions are also unavailable from temporary parent-seeded subagent sessions. Use a named parent subagent session first if nested durable delegation is needed.
 - To start a fresh durable conversation, choose a new `session` handle.
 
-## Initial Context
+### Initial Context
 
 `initialContext` controls only how a newly-created child conversation starts:
 
@@ -307,7 +326,7 @@ Calls without `session` are ephemeral:
 
 When multiple calls need `initialContext: "parent"`, they all receive the same parent snapshot captured at the start of the tool invocation.
 
-## Result Format
+### Result Format
 
 The main agent receives a uniform wrapper for one or many calls:
 
@@ -335,7 +354,7 @@ Unknown agent: "testing-audit".
 
 Full session metadata, including generated session ID, effective cwd, creation status, and applied initial context, is available in the tool result details and TUI expanded view.
 
-## Delegation Guards
+### Delegation Guards
 
 By default, this extension enforces two runtime guards:
 
