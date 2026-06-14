@@ -9,10 +9,11 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { type ExtensionAPI, getDefaultSessionDir, SessionManager } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, SessionManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { type AgentConfig, discoverAgentsWithStarter } from "./agents.js";
 import { renderCall, renderResult } from "./render.js";
+import { ensureDefaultSessionDir, getDefaultSessionDirPath } from "./session-paths.js";
 import { getResultSummaryText } from "./runner-events.js";
 import { mapConcurrent, runAgent } from "./runner.js";
 import { acquireSessionLocks, releaseSessionLocks, type SessionLockTarget } from "./session-lock.js";
@@ -527,7 +528,7 @@ function getPersistentSessionDir(ctx: ExtensionExecutionContext): string | undef
 
   try {
     const current = path.resolve(ctx.sessionManager.getSessionDir());
-    const defaultDir = path.resolve(getDefaultSessionDir(ctx.cwd));
+    const defaultDir = path.resolve(getDefaultSessionDirPath(ctx.cwd));
     return current === defaultDir ? undefined : ctx.sessionManager.getSessionDir();
   } catch {
     return undefined;
@@ -547,7 +548,7 @@ function getNamedSessionParentError(
 }
 
 function sessionBaseDir(call: NormalizedCall, sessionDir: string | undefined): string {
-  return sessionDir ?? getDefaultSessionDir(call.effectiveCwd);
+  return sessionDir ?? ensureDefaultSessionDir(call.effectiveCwd);
 }
 
 function getSessionLockTargets(
