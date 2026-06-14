@@ -16,6 +16,17 @@ There are many subagent extensions for Pi; this one is mine.
 
 **Small Surface Area** — The extension keeps delegation explicit: choose an agent, send a prompt, optionally name the session.
 
+## Features
+
+- **Auto-Discovery** — Agents are found at startup and listed in the main agent's system prompt.
+- **Unified Calls API** — One schema for one or many subagent calls.
+- **Named Persistent Sessions** — Continue specialist subagents across multiple turns.
+- **Agent Session Guidance** — Agent definitions can advise when persistent or ephemeral calls fit best.
+- **Per-Call Initial Context** — Each call chooses empty or parent-seeded creation.
+- **Depth + Cycle Guards** — Prevent runaway recursive delegation.
+- **Streaming Updates** — Watch progress in real time.
+- **Rich TUI Rendering** — Collapsed/expanded views with usage stats, tool calls, markdown output, and session metadata.
+
 ## Install
 
 ### Option 1: Install from npm (recommended)
@@ -138,17 +149,6 @@ Each subagent runs in a separate `pi` process:
 - Inherits relevant parent CLI configuration such as extensions, provider/theme/skill flags, model/thinking/tool defaults, and custom session storage when applicable.
 
 The main agent receives a concise text summary for each subagent call. Tool calls, usage, generated session IDs, and creation metadata are available to the TUI and tool result details; the text summary includes only the logical `session` handle in the call header when one was provided.
-
-## Features
-
-- **Auto-Discovery** — Agents are found at startup and listed in the main agent's system prompt.
-- **Unified Calls API** — One schema for one or many subagent calls.
-- **Named Persistent Sessions** — Continue specialist subagents across multiple turns.
-- **Agent Session Guidance** — Agent definitions can advise when persistent or ephemeral calls fit best.
-- **Per-Call Initial Context** — Each call chooses empty or parent-seeded creation.
-- **Depth + Cycle Guards** — Prevent runaway recursive delegation.
-- **Streaming Updates** — Watch progress in real time.
-- **Rich TUI Rendering** — Collapsed/expanded views with usage stats, tool calls, markdown output, and session metadata.
 
 ## Tool API
 
