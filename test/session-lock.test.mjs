@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   acquireSessionLock,
+  acquireSessionLocks,
   lockTokenMatches,
   releaseSessionLocks,
   SESSION_LOCK_STALE_MS,
@@ -71,6 +72,26 @@ test("session lock release does not remove a lock with a different owner token",
     assert.equal(lockTokenMatches(lock), false);
     releaseSessionLocks([lock]);
     assert.equal(fs.existsSync(lock.path), true);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("batch lock acquisition returns mkdir errors and releases earlier locks", () => {
+  const tmpDir = makeTempDir();
+  try {
+    const firstRoot = path.join(tmpDir, "locks");
+    const blockingFile = path.join(tmpDir, "not-a-directory");
+    fs.writeFileSync(blockingFile, "x");
+
+    const result = acquireSessionLocks([
+      target(firstRoot, "subagent.first"),
+      target(path.join(blockingFile, "locks"), "subagent.second"),
+    ]);
+
+    assert.match(result.error ?? "", /Failed to lock persistent subagent session subagent.second/);
+    assert.equal(result.locks.length, 0);
+    assert.equal(fs.existsSync(path.join(firstRoot, "subagent.first.lock")), false);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

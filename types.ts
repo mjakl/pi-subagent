@@ -111,11 +111,17 @@ export function normalizeCompletedResult(result: SingleResult, wasAborted: boole
 	const hasSemanticSuccess = hasSemanticCompletion(result);
 
 	if (wasAborted) {
-		if (hasSemanticSuccess) {
+		if (hasSemanticSuccess && !result.processError) {
 			result.exitCode = 0;
 			if (result.stopReason === "aborted") result.stopReason = undefined;
 			if (result.errorMessage === "Subagent was aborted.") {
 				result.errorMessage = undefined;
+			}
+		} else if (result.processError) {
+			if (result.exitCode <= 0) result.exitCode = 1;
+			if (!result.stopReason) result.stopReason = "error";
+			if (!result.errorMessage && result.stderr.trim()) {
+				result.errorMessage = result.stderr.trim();
 			}
 		} else {
 			result.exitCode = 130;

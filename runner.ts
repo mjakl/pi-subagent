@@ -291,6 +291,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
     model: agent.model,
   };
 
+  if (signal?.aborted) {
+    return normalizeCompletedResult(result, true);
+  }
+
   const emitUpdate = () => {
     onUpdate?.({
       content: [

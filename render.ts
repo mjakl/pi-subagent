@@ -5,7 +5,7 @@
 import * as os from "node:os";
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
-import { getResultSummaryText } from "./runner-events.js";
+import { getProcessErrorText, getResultSummaryText } from "./runner-events.js";
 import {
 	type DisplayItem,
 	type InitialContext,
@@ -54,8 +54,14 @@ function shortenPath(p: string): string {
 	return p.startsWith(home) ? `~${p.slice(home.length)}` : p;
 }
 
-function oneLine(text: string): string {
-	return text.replace(/\s+/g, " ").trim();
+function oneLine(text: unknown): string {
+	return typeof text === "string" ? text.replace(/\s+/g, " ").trim() : "";
+}
+
+function getResultPrompt(result: SingleResult & { task?: unknown }): string {
+	if (typeof result.prompt === "string") return result.prompt;
+	if (typeof result.task === "string") return result.task;
+	return "";
 }
 
 type ThemeFg = (color: string, text: string) => string;
@@ -242,6 +248,7 @@ function renderCallsExpanded(
 		const rIcon = statusIcon(r, theme);
 		const displayItems = getDisplayItems(r.messages);
 		const finalOutput = getFinalOutput(r.messages);
+		const processErrorText = getProcessErrorText(r);
 		const label = formatResultLabel(r, index);
 
 		container.addChild(new Spacer(1));
@@ -253,7 +260,7 @@ function renderCallsExpanded(
 			container.addChild(new Text(theme.fg("muted", "Session: ") + theme.fg("dim", `${r.session.handle} (${sessionStatus}, id ${r.session.id})`), 0, 0));
 			container.addChild(new Text(theme.fg("muted", "Session cwd: ") + theme.fg("dim", shortenPath(r.session.cwd)), 0, 0));
 		}
-		container.addChild(new Text(theme.fg("muted", "Prompt: ") + theme.fg("dim", oneLine(r.prompt)), 0, 0));
+		container.addChild(new Text(theme.fg("muted", "Prompt: ") + theme.fg("dim", oneLine(getResultPrompt(r))), 0, 0));
 
 		for (const item of displayItems) {
 			if (item.type === "toolCall") {
@@ -270,6 +277,11 @@ function renderCallsExpanded(
 		} else if (isResultError(r)) {
 			container.addChild(new Spacer(1));
 			container.addChild(new Text(theme.fg("error", getResultSummaryText(r)), 0, 0));
+		}
+
+		if (processErrorText && finalOutput) {
+			container.addChild(new Spacer(1));
+			container.addChild(new Text(theme.fg("error", processErrorText), 0, 0));
 		}
 
 		const taskUsage = formatUsage(r.usage, r.model);
@@ -306,11 +318,13 @@ function renderCallsCollapsed(
 	for (const [index, r] of details.results.entries()) {
 		const rIcon = statusIcon(r, theme);
 		const displayItems = getDisplayItems(r.messages);
+		const processErrorText = getProcessErrorText(r);
 		text += `\n\n${theme.fg("muted", "─── ")}${theme.fg("accent", formatResultLabel(r, index))} ${rIcon}`;
 		if (displayItems.length === 0) {
 			text += `\n${theme.fg(r.exitCode === -1 ? "muted" : isResultError(r) ? "error" : "muted", r.exitCode === -1 ? "(running...)" : getResultSummaryText(r))}`;
 		} else {
 			text += `\n${renderDisplayItems(displayItems, false, theme, COLLAPSED_LINE_COUNT)}`;
+			if (processErrorText) text += `\n${theme.fg("error", processErrorText)}`;
 			if (countDisplayLines(displayItems) > COLLAPSED_LINE_COUNT) {
 				text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
 			}

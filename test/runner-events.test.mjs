@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   getFinalAssistantText,
+  getProcessErrorText,
   getResultSummaryText,
   processPiEvent,
   processPiJsonLine,
@@ -110,4 +111,25 @@ test("stderr remains a fallback only for error results", () => {
   failedResult.exitCode = 1;
   failedResult.stderr = "warning on stderr";
   assert.equal(getResultSummaryText(failedResult), "warning on stderr");
+});
+
+test("process errors remain visible alongside final assistant text", () => {
+  const result = makeResult();
+  result.exitCode = 1;
+  result.processError = true;
+  result.errorMessage = "Named session did not exit.";
+  result.messages.push({
+    role: "assistant",
+    content: [{ type: "text", text: "Done" }],
+    timestamp: 1,
+  });
+
+  assert.equal(
+    getProcessErrorText(result),
+    "Subagent process error after completion: Named session did not exit.",
+  );
+  assert.equal(
+    getResultSummaryText(result),
+    "Done\n\nSubagent process error after completion: Named session did not exit.",
+  );
 });

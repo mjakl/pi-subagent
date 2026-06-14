@@ -126,9 +126,25 @@ export function getFinalAssistantText(messages) {
   return "";
 }
 
+export function getProcessErrorText(result) {
+  if (!result?.processError) return "";
+
+  const message =
+    typeof result.errorMessage === "string" && result.errorMessage.trim()
+      ? result.errorMessage.trim()
+      : typeof result.stderr === "string" && result.stderr.trim()
+        ? result.stderr.trim()
+        : "Subagent process failed after completion.";
+
+  return `Subagent process error after completion: ${message}`;
+}
+
 export function getResultSummaryText(result) {
   const finalText = getFinalAssistantText(result?.messages);
+  const processErrorText = getProcessErrorText(result);
+  if (finalText && processErrorText) return `${finalText}\n\n${processErrorText}`;
   if (finalText) return finalText;
+  if (processErrorText) return processErrorText;
 
   if (typeof result?.errorMessage === "string" && result.errorMessage.trim()) {
     return result.errorMessage.trim();

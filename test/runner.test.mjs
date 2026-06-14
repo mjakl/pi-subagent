@@ -118,6 +118,32 @@ test("normalizeCompletedResult preserves process-level errors despite semantic c
   assert.equal(isResultError(result), true);
 });
 
+test("normalizeCompletedResult does not mask process-level errors on abort", () => {
+  const result = makeResult({
+    exitCode: 1,
+    processError: true,
+    stopReason: "error",
+    errorMessage: "Named subagent session did not exit.",
+    stderr: "Named subagent session did not exit.",
+    sawAgentEnd: true,
+    messages: [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Done." }],
+        timestamp: 1,
+      },
+    ],
+  });
+
+  normalizeCompletedResult(result, true);
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.stopReason, "error");
+  assert.equal(result.errorMessage, "Named subagent session did not exit.");
+  assert.equal(isResultSuccess(result), false);
+  assert.equal(isResultError(result), true);
+});
+
 test("normalizeCompletedResult preserves semantic completion when the process is aborted after agent_end", () => {
   const result = makeResult({
     exitCode: 130,
@@ -186,6 +212,43 @@ test("rewriteSessionHeaderCwd updates only the session header cwd", async () => 
       version: 3,
     });
     assert.equal(JSON.parse(lines[1]).message.content, "hi");
+  } finally {
+    cleanup();
+  }
+});
+
+test("runAgent returns immediately when the signal is already aborted", async () => {
+  const { moduleUrl, cleanup } = createTestableRunnerModule();
+  try {
+    const { runAgent } = await import(moduleUrl);
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await runAgent({
+      cwd: process.cwd(),
+      agents: [
+        {
+          name: "review",
+          description: "reviewer",
+          source: "user",
+          systemPrompt: "",
+        },
+      ],
+      callIndex: 0,
+      agentName: "review",
+      prompt: "hello",
+      initialContext: "empty",
+      parentDepth: 0,
+      parentAgentStack: [],
+      maxDepth: 3,
+      preventCycles: true,
+      signal: controller.signal,
+      makeDetails: (results) => ({ projectAgentsDir: null, results }),
+    });
+
+    assert.equal(result.exitCode, 130);
+    assert.equal(result.stopReason, "aborted");
+    assert.equal(result.errorMessage, "Subagent was aborted.");
   } finally {
     cleanup();
   }

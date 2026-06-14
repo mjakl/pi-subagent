@@ -63,11 +63,13 @@ export function parseInheritedCliArgs(argv) {
     const inlineValue = eqIdx !== -1 ? raw.slice(eqIdx + 1) : undefined;
 
     const nextToken = argv[i + 1];
-    const nextIsValue = nextToken !== undefined && !nextToken.startsWith("-");
+    const nextExists = nextToken !== undefined;
+    const nextIsValue = nextExists && !nextToken.startsWith("-");
 
-    const getValue = () => {
+    const getValue = (options = {}) => {
+      const { allowDashValue = false } = options;
       if (inlineValue !== undefined) return [inlineValue, 1];
-      if (nextIsValue) return [nextToken, 2];
+      if (nextExists && (allowDashValue || nextIsValue)) return [nextToken, 2];
       return [undefined, 1];
     };
 
@@ -84,7 +86,7 @@ export function parseInheritedCliArgs(argv) {
         "--subagent-max-depth",
       ].includes(flagName)
     ) {
-      const [, skip] = getValue();
+      const [, skip] = getValue({ allowDashValue: true });
       i += skip;
       continue;
     }
@@ -123,7 +125,7 @@ export function parseInheritedCliArgs(argv) {
     }
 
     if (flagName === "--extension" || flagName === "-e") {
-      const [value, skip] = getValue();
+      const [value, skip] = getValue({ allowDashValue: true });
       if (value !== undefined) {
         extensionArgs.push(flagName, resolvePathArg(value, { allowPackageSource: true }));
       }
@@ -132,14 +134,14 @@ export function parseInheritedCliArgs(argv) {
     }
 
     if (["--skill", "--prompt-template", "--theme"].includes(flagName)) {
-      const [value, skip] = getValue();
+      const [value, skip] = getValue({ allowDashValue: true });
       if (value !== undefined) alwaysProxy.push(flagName, resolvePathArg(value));
       i += skip;
       continue;
     }
 
     if (flagName === "--session-dir") {
-      const [value, skip] = getValue();
+      const [value, skip] = getValue({ allowDashValue: true });
       if (value !== undefined) {
         sessionDir = resolvePathArg(value, { alwaysResolveRelative: true });
         alwaysProxy.push(flagName, sessionDir);
@@ -156,7 +158,7 @@ export function parseInheritedCliArgs(argv) {
         "--models",
       ].includes(flagName)
     ) {
-      const [value, skip] = getValue();
+      const [value, skip] = getValue({ allowDashValue: true });
       if (value !== undefined) alwaysProxy.push(flagName, value);
       i += skip;
       continue;
@@ -178,21 +180,21 @@ export function parseInheritedCliArgs(argv) {
     }
 
     if (flagName === "--model") {
-      const [value, skip] = getValue();
+      const [value, skip] = getValue({ allowDashValue: true });
       if (value !== undefined) fallbackModel = value;
       i += skip;
       continue;
     }
 
     if (flagName === "--thinking") {
-      const [value, skip] = getValue();
+      const [value, skip] = getValue({ allowDashValue: true });
       if (value !== undefined) fallbackThinking = value;
       i += skip;
       continue;
     }
 
     if (flagName === "--tools") {
-      const [value, skip] = getValue();
+      const [value, skip] = getValue({ allowDashValue: true });
       if (value !== undefined) fallbackTools = value;
       i += skip;
       continue;

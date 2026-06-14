@@ -126,7 +126,13 @@ export function acquireSessionLock(
   target: SessionLockTarget,
 ): { lock?: SessionLock; error?: string } {
   const lockPath = path.join(target.lockRoot, `${target.sessionId}.lock`);
-  fs.mkdirSync(target.lockRoot, { recursive: true });
+  try {
+    fs.mkdirSync(target.lockRoot, { recursive: true });
+  } catch (error) {
+    return {
+      error: `Failed to lock persistent subagent session ${target.sessionId}: ${String(error)}`,
+    };
+  }
 
   const token = randomUUID();
   const createdAt = new Date().toISOString();
@@ -169,7 +175,16 @@ export function acquireSessionLocks(
 ): { locks: SessionLock[]; error?: string } {
   const locks: SessionLock[] = [];
   for (const target of targets) {
-    const result = acquireSessionLock(target);
+    let result: { lock?: SessionLock; error?: string };
+    try {
+      result = acquireSessionLock(target);
+    } catch (error) {
+      releaseSessionLocks(locks);
+      return {
+        locks: [],
+        error: `Failed to lock persistent subagent session ${target.sessionId}: ${String(error)}`,
+      };
+    }
     if (result.error) {
       releaseSessionLocks(locks);
       return { locks: [], error: result.error };

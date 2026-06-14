@@ -171,3 +171,38 @@ test("does not inherit parent session identity flags", () => {
 
   assert.deepEqual(parsed.alwaysProxy, ["--provider", "openrouter"]);
 });
+
+test("consumes dash-prefixed values for known value flags", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-cli-"));
+  const previousCwd = process.cwd();
+  process.chdir(tmpDir);
+
+  try {
+    const parsed = parseInheritedCliArgs([
+      "/usr/bin/node",
+      "pi",
+      "--session-dir",
+      "-sessions",
+      "--api-key",
+      "-secret",
+      "--model",
+      "-fallback-model",
+      "--custom-flag",
+      "-not-a-value",
+    ]);
+
+    assert.deepEqual(parsed.alwaysProxy, [
+      "--session-dir",
+      path.join(tmpDir, "-sessions"),
+      "--api-key",
+      "-secret",
+      "--custom-flag",
+      "-not-a-value",
+    ]);
+    assert.equal(parsed.sessionDir, path.join(tmpDir, "-sessions"));
+    assert.equal(parsed.fallbackModel, "-fallback-model");
+  } finally {
+    process.chdir(previousCwd);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
