@@ -366,19 +366,6 @@ Internal env vars managed by the extension and propagated to child processes:
 
 Recommended integration note: if another extension needs to detect whether it is running inside a delegated subagent process, check `PI_SUBAGENT_DEPTH`. Treat `PI_SUBAGENT_DEPTH > 0` as "this pi process is a subagent".
 
-## Project Structure
-
-```text
-index.ts       — Extension entry point, tool registration, validation, session identity, orchestration
-agents.ts      — Agent discovery and Markdown parsing
-contract.ts    — Shared parent-facing tool contract text and prompt rendering
-runner-cli.js  — Parent CLI inheritance for child processes
-runner-events.js — Pi JSON event parsing and result summaries
-runner.ts      — Process runner for child `pi` invocations
-render.ts      — TUI rendering for subagent calls/results
-types.ts       — Shared types and result helpers
-```
-
 ## Attribution
 
 Inspired by implementations from [vaayne/agent-kit](https://github.com/vaayne/agent-kit) and [mariozechner/pi-mono](https://github.com/badlogic/pi-mono).
