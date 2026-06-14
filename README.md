@@ -41,7 +41,118 @@ cd pi-subagent
 npm install
 ```
 
+## Subagent Definitions
+
+Subagents are defined as Markdown files with YAML frontmatter.
+
+**User agents:** `~/.pi/agent/agents/*.md` by default, or `$PI_CODING_AGENT_DIR/agents/*.md` when `PI_CODING_AGENT_DIR` is set.
+
+**Project agents:** `.pi/agents/*.md`.
+
+Project agents win on name conflicts. They are repo-controlled configuration and are discovered, advertised to the main agent, and executed like user agents. Use project agents only in repositories you trust.
+
+### Starter Agent
+
+If no user or project subagents can be found, `pi-subagent` creates a starter user agent named `explorer` in the active user agents directory:
+
+- `~/.pi/agent/agents/explorer.md` by default
+- `$PI_CODING_AGENT_DIR/agents/explorer.md` when `PI_CODING_AGENT_DIR` is set
+
+The starter is read-only (`read`, `grep`, `find`, `ls`) and is meant for focused codebase exploration. It includes an advisory preference for topic-specific persistent sessions so follow-up exploration can reuse context. Existing files are never overwritten.
+
+### Small Example Agents
+
+Small, focused definitions work best. The `description` helps the main agent choose a subagent; the Markdown body is the subagent's extra system prompt.
+
+#### explore
+
+A good default for fast codebase reconnaissance. It prefers named sessions because exploration often has follow-up questions.
+
+```markdown
+---
+name: explore
+description: Codebase exploration specialist for focused searches and evidence-backed summaries.
+sessionPreference: persistent
+sessionHint: Prefer a topic-specific named session for iterative exploration; use ephemeral calls for one-off searches.
+---
+
+You are a codebase exploration specialist. Find the relevant files, symbols, and tests for the request. Return concise findings with file paths and line references.
+```
+
+#### review
+
+A useful complement to `explore`: stateless by default, judgment-oriented, and configured for deeper reasoning.
+
+```markdown
+---
+name: review
+description: Pragmatic code reviewer for correctness, regression risk, test coverage, and maintainability.
+thinking: high
+sessionPreference: ephemeral
+sessionHint: Use ephemeral calls for independent reviews; use a named session only when continuing the same review thread.
+---
+
+You review code changes. Focus on substantive issues, cite files and lines, and distinguish confirmed problems from suggestions. Keep the report concise.
+```
+
+### Frontmatter Fields
+
+| Field | Required | Default | Description |
+| --- | --- | --- | --- |
+| `name` | Yes | — | Agent identifier used in tool calls. |
+| `description` | Yes | — | What the agent does; shown to the main agent. |
+| `model` | No | Parent/default Pi model | Overrides the model for this agent. Supports provider-prefixed values such as `anthropic/claude-3-5-sonnet`. |
+| `thinking` | No | Parent/default Pi thinking level | Sets the thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`). |
+| `tools` | No | `read,bash,edit,write` | Comma-separated list of built-in tools to enable for this agent. |
+| `sessionPreference` | No | — | Advisory machine-readable hint for the main agent. One of `ephemeral`, `persistent`, or `either`. |
+| `sessionHint` | No | — | Advisory free-form guidance shown to the main agent when choosing whether to pass `session`. |
+
+Notes:
+
+- `tools` controls built-in tools. Extension tools remain available unless extensions are disabled.
+- `sessionPreference` and `sessionHint` only guide the main agent. They do not automatically create, require, or name persistent sessions.
+- `sessionHint` can be used by itself for free-form guidance; the extension does not infer `sessionPreference` from it.
+- The Markdown body becomes the agent's system prompt and is appended to Pi's default system prompt.
+- Agent files are read when the tool runs; continued named sessions use the current definition of the agent name.
+
+### Available Built-in Tools
+
+Available tools by default: `read`, `bash`, `edit`, `write`.
+
+Optional built-in tools:
+
+- `grep` — Search file contents
+- `find` — Find files by glob pattern
+- `ls` — List directory contents
+
+For a read-only agent, use `tools: read,find,ls,grep`.
+
+## How Communication Works
+
+Each subagent runs in a separate `pi` process:
+
+- No shared memory/state with the parent process.
+- No visibility into sibling subagents.
+- Its own model/tool/runtime loop.
+- Started with `PI_OFFLINE=1` to skip startup network operations and reduce latency.
+- Inherits relevant parent CLI configuration such as extensions, provider/theme/skill flags, model/thinking/tool defaults, and custom session storage when applicable.
+
+The main agent receives a concise text summary for each subagent call. Tool calls, usage, generated session IDs, and creation metadata are available to the TUI and tool result details; the text summary includes only the logical `session` handle in the call header when one was provided.
+
+## Features
+
+- **Auto-Discovery** — Agents are found at startup and listed in the main agent's system prompt.
+- **Unified Calls API** — One schema for one or many subagent calls.
+- **Named Persistent Sessions** — Continue specialist subagents across multiple turns.
+- **Agent Session Guidance** — Agent definitions can advise when persistent or ephemeral calls fit best.
+- **Per-Call Initial Context** — Each call chooses empty or parent-seeded creation.
+- **Depth + Cycle Guards** — Prevent runaway recursive delegation.
+- **Streaming Updates** — Watch progress in real time.
+- **Rich TUI Rendering** — Collapsed/expanded views with usage stats, tool calls, markdown output, and session metadata.
+
 ## Tool API
+
+**Note:** This is reference documentation for the Pi agent/tool interface. Users do not need to call `subagent`, write JSON, or interact with the tools in any way; the main Pi agent invokes the tool when it delegates work.
 
 The tool is named `subagent` and accepts one top-level `calls` array. Use the same shape for one call and many calls.
 
@@ -254,115 +365,6 @@ Internal env vars managed by the extension and propagated to child processes:
 - `PI_SUBAGENT_PREVENT_CYCLES`
 
 Recommended integration note: if another extension needs to detect whether it is running inside a delegated subagent process, check `PI_SUBAGENT_DEPTH`. Treat `PI_SUBAGENT_DEPTH > 0` as "this pi process is a subagent".
-
-## Subagent Definitions
-
-Subagents are defined as Markdown files with YAML frontmatter.
-
-**User agents:** `~/.pi/agent/agents/*.md` by default, or `$PI_CODING_AGENT_DIR/agents/*.md` when `PI_CODING_AGENT_DIR` is set.
-
-**Project agents:** `.pi/agents/*.md`.
-
-Project agents win on name conflicts. They are repo-controlled configuration and are discovered, advertised to the main agent, and executed like user agents. Use project agents only in repositories you trust.
-
-### Starter Agent
-
-If no user or project subagents can be found, `pi-subagent` creates a starter user agent named `explorer` in the active user agents directory:
-
-- `~/.pi/agent/agents/explorer.md` by default
-- `$PI_CODING_AGENT_DIR/agents/explorer.md` when `PI_CODING_AGENT_DIR` is set
-
-The starter is read-only (`read`, `grep`, `find`, `ls`) and is meant for focused codebase exploration. It includes an advisory preference for topic-specific persistent sessions so follow-up exploration can reuse context. Existing files are never overwritten.
-
-### Small Example Agents
-
-Small, focused definitions work best. The `description` helps the main agent choose a subagent; the Markdown body is the subagent's extra system prompt.
-
-#### explore
-
-A good default for fast codebase reconnaissance. It prefers named sessions because exploration often has follow-up questions.
-
-```markdown
----
-name: explore
-description: Codebase exploration specialist for focused searches and evidence-backed summaries.
-sessionPreference: persistent
-sessionHint: Prefer a topic-specific named session for iterative exploration; use ephemeral calls for one-off searches.
----
-
-You are a codebase exploration specialist. Find the relevant files, symbols, and tests for the request. Return concise findings with file paths and line references.
-```
-
-#### review
-
-A useful complement to `explore`: stateless by default, judgment-oriented, and configured for deeper reasoning.
-
-```markdown
----
-name: review
-description: Pragmatic code reviewer for correctness, regression risk, test coverage, and maintainability.
-thinking: high
-sessionPreference: ephemeral
-sessionHint: Use ephemeral calls for independent reviews; use a named session only when continuing the same review thread.
----
-
-You review code changes. Focus on substantive issues, cite files and lines, and distinguish confirmed problems from suggestions. Keep the report concise.
-```
-
-### Frontmatter Fields
-
-| Field | Required | Default | Description |
-| --- | --- | --- | --- |
-| `name` | Yes | — | Agent identifier used in tool calls. |
-| `description` | Yes | — | What the agent does; shown to the main agent. |
-| `model` | No | Parent/default Pi model | Overrides the model for this agent. Supports provider-prefixed values such as `anthropic/claude-3-5-sonnet`. |
-| `thinking` | No | Parent/default Pi thinking level | Sets the thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`). |
-| `tools` | No | `read,bash,edit,write` | Comma-separated list of built-in tools to enable for this agent. |
-| `sessionPreference` | No | — | Advisory machine-readable hint for the main agent. One of `ephemeral`, `persistent`, or `either`. |
-| `sessionHint` | No | — | Advisory free-form guidance shown to the main agent when choosing whether to pass `session`. |
-
-Notes:
-
-- `tools` controls built-in tools. Extension tools remain available unless extensions are disabled.
-- `sessionPreference` and `sessionHint` only guide the main agent. They do not automatically create, require, or name persistent sessions.
-- `sessionHint` can be used by itself for free-form guidance; the extension does not infer `sessionPreference` from it.
-- The Markdown body becomes the agent's system prompt and is appended to Pi's default system prompt.
-- Agent files are read when the tool runs; continued named sessions use the current definition of the agent name.
-
-### Available Built-in Tools
-
-Available tools by default: `read`, `bash`, `edit`, `write`.
-
-Optional built-in tools:
-
-- `grep` — Search file contents
-- `find` — Find files by glob pattern
-- `ls` — List directory contents
-
-For a read-only agent, use `tools: read,find,ls,grep`.
-
-## How Communication Works
-
-Each subagent runs in a separate `pi` process:
-
-- No shared memory/state with the parent process.
-- No visibility into sibling subagents.
-- Its own model/tool/runtime loop.
-- Started with `PI_OFFLINE=1` to skip startup network operations and reduce latency.
-- Inherits relevant parent CLI configuration such as extensions, provider/theme/skill flags, model/thinking/tool defaults, and custom session storage when applicable.
-
-The main agent receives a concise text summary for each subagent call. Tool calls, usage, generated session IDs, and creation metadata are available to the TUI and tool result details; the text summary includes only the logical `session` handle in the call header when one was provided.
-
-## Features
-
-- **Auto-Discovery** — Agents are found at startup and listed in the main agent's system prompt.
-- **Unified Calls API** — One schema for one or many subagent calls.
-- **Named Persistent Sessions** — Continue specialist subagents across multiple turns.
-- **Agent Session Guidance** — Agent definitions can advise when persistent or ephemeral calls fit best.
-- **Per-Call Initial Context** — Each call chooses empty or parent-seeded creation.
-- **Depth + Cycle Guards** — Prevent runaway recursive delegation.
-- **Streaming Updates** — Watch progress in real time.
-- **Rich TUI Rendering** — Collapsed/expanded views with usage stats, tool calls, markdown output, and session metadata.
 
 ## Project Structure
 
