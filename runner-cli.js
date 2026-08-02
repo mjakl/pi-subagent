@@ -256,6 +256,15 @@ export function parseInheritedCliArgs(argv) {
     i++;
   }
 
+  // If --model wasn't on the CLI, fall back to PI_MODEL env var so subagents
+  // inherit the parent's effective model when the user sets PI_MODEL instead of
+  // passing --model.  Resolution chain (runner.ts):
+  //   callModel ?? agent.model ?? inheritedCliArgs.fallbackModel
+  if (fallbackModel === undefined) {
+    const envModel = process.env["PI_MODEL"]?.trim();
+    if (envModel) fallbackModel = envModel;
+  }
+
   return {
     extensionArgs,
     alwaysProxy,
