@@ -1,21 +1,9 @@
-import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
+import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 
-const PI_CODING_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
-
-function expandTilde(input: string): string {
-  if (input === "~") return os.homedir();
-  if (input.startsWith("~/") || (process.platform === "win32" && input.startsWith("~\\"))) {
-    return path.join(os.homedir(), input.slice(2));
-  }
-  return input;
-}
-
-function getAgentDir(): string {
-  const configured = process.env[PI_CODING_AGENT_DIR_ENV]?.trim();
-  if (configured) return expandTilde(configured);
-  return path.join(os.homedir(), ".pi", "agent");
+function normalizeSessionDir(directory: string): string {
+  // Reuse Pi's path normalization for runtime/env values, not just disk settings.
+  return SettingsManager.inMemory({ sessionDir: directory }).getSessionDir()!;
 }
 
 /**
@@ -26,14 +14,23 @@ function getAgentDir(): string {
  * @earendil-works/pi-coding-agent package entry point.
  */
 export function getDefaultSessionDirPath(cwd: string, agentDir = getAgentDir()): string {
-  const resolvedCwd = path.resolve(expandTilde(cwd));
-  const resolvedAgentDir = path.resolve(expandTilde(agentDir));
+  const resolvedCwd = path.resolve(normalizeSessionDir(cwd));
+  const resolvedAgentDir = path.resolve(normalizeSessionDir(agentDir));
   const safePath = `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
   return path.join(resolvedAgentDir, "sessions", safePath);
 }
 
-export function ensureDefaultSessionDir(cwd: string, agentDir?: string): string {
-  const sessionDir = getDefaultSessionDirPath(cwd, agentDir);
-  fs.mkdirSync(sessionDir, { recursive: true });
-  return sessionDir;
+/** Resolve the directory the child would select, without changing the parent's cwd. */
+export function resolveChildSessionDir(
+  cwd: string,
+  cliSessionDir?: string,
+  runtimeSessionDir?: string,
+): string {
+  // Relative configuration roots, like relative session paths, belong to the child cwd.
+  const agentDir = path.resolve(cwd, getAgentDir());
+  const configured = cliSessionDir || runtimeSessionDir || process.env.PI_CODING_AGENT_SESSION_DIR ||
+    SettingsManager.create(cwd, agentDir).getSessionDir();
+  return configured
+    ? path.resolve(cwd, normalizeSessionDir(configured))
+    : getDefaultSessionDirPath(cwd, agentDir);
 }

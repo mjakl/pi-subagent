@@ -32,7 +32,7 @@ There are many subagent extensions for Pi; this one is mine.
 
 ### Install
 
-Requires Pi 0.80.6 or newer.
+Requires Pi 0.87.1 or newer.
 
 #### Option 1: Install from npm (recommended)
 
@@ -57,6 +57,16 @@ cd pi-subagent
 npm install
 ```
 
+### Upgrade existing installations
+
+This update corrects where named-session locks are stored. Before using the new extension:
+
+1. Finish or cancel affected delegations and wait for their child processes to exit.
+2. While idle, restart or reload all affected parent Pi runtimes, including terminal, RPC, and SDK hosts, so they load the new extension before any new delegations.
+3. Do not let old and new extension versions access the same persistent child session concurrently. Upgrading Pi to 0.87.1 alone does not replace extension code already loaded in a running process.
+
+No session migration is needed. Existing session files, IDs, names, and history stay in place. The extension does not automatically delete stale locks; remove a reported stale lock only after confirming its child is no longer running.
+
 ### Using Pi Subagent
 
 Once installed, use Pi normally. Ask the main agent for work that benefits from a specialist, such as "review this diff" or "find where authentication is implemented." The main agent decides when to delegate, runs the subagent, and folds the result back into your conversation.
@@ -76,7 +86,7 @@ pi-subagent works out of the box — on first run it creates a starter `explore`
 
 Subagents are defined as Markdown files with YAML frontmatter.
 
-**User agents:** `~/.pi/agent/agents/*.md` by default, or `$PI_CODING_AGENT_DIR/agents/*.md` when `PI_CODING_AGENT_DIR` is set.
+**User agents:** `~/.pi/agent/agents/*.md` by default, or `$PI_CODING_AGENT_DIR/agents/*.md` when `PI_CODING_AGENT_DIR` is set. Discovery and starter creation use Pi's configuration-directory interpretation, including supported `~` expansion. Files mistakenly created under a project-local literal `~/` directory by older versions are left untouched and are not imported or migrated.
 
 **Project agents:** `.pi/agents/*.md`.
 
@@ -200,6 +210,8 @@ Each subagent runs in a separate `pi` process:
 - Started with `PI_OFFLINE=1` to skip startup network operations and reduce latency.
 - Inherits relevant parent configuration such as extensions, theme/skill flags, startup `--thinking` fallback (not live parent reasoning), tool defaults, and custom session storage when applicable. When neither the call nor agent file sets a model, the child receives the parent session's current effective provider/model at delegation time. Temporary `--approve` trust is inherited only when the child uses the same working directory; `--no-approve` is always preserved. A per-call `model` overrides the agent file's default model.
 
+An inherited `--system-prompt` that names an existing readable file is resolved against the parent's startup cwd before forwarding. The child reads that file at startup, even when its cwd differs; literal prompt text is forwarded unchanged. File contents are not cached or snapshotted.
+
 The main agent receives a concise text summary for each subagent call. Tool calls, usage, generated session IDs, and creation metadata are available to the TUI and tool result details; the text summary includes only the logical `session` handle in the call header when one was provided.
 
 ### Tool API
@@ -259,6 +271,8 @@ A tool invocation accepts between 1 and 8 calls. Each call supports:
 ```
 
 If omitted, the agent file's `model` is used when configured; otherwise the child uses the parent session's current effective provider/model at delegation time. This applies to continued named sessions too, so a parent model change affects their next call.
+
+Call and agent model overrides containing `/` are forwarded unchanged without the parent's startup `--provider` restriction. Pi decides whether the value is provider-qualified or a raw slash-containing model ID. Use full qualification to resolve ambiguity, for example `openrouter/anthropic/claude-sonnet-4` or `openrouter/openrouter/free`. Bare names and patterns retain the parent's startup provider fallback. Inherited effective-parent models are always fully qualified, even when their IDs contain slashes.
 
 #### Per-call thinking override
 
@@ -370,6 +384,20 @@ Important rules:
 - Named child sessions require a persisted parent Pi session. If the parent is running with `--no-session`, omit `session` for ephemeral delegation.
 - Named child sessions are also unavailable from temporary parent-seeded subagent sessions. Use a named parent subagent session first if nested durable delegation is needed.
 - To start a fresh durable conversation, choose a new `session` handle.
+
+#### Session storage
+
+Each named call resolves one absolute storage directory for session lookup, locking, and child startup. The precedence is:
+
+1. The parent's explicit CLI `--session-dir`, already resolved against its startup cwd.
+2. A custom directory forwarded from the parent runtime's session manager.
+3. Inherited `PI_CODING_AGENT_SESSION_DIR`.
+4. The target project's `sessionDir` setting, then the global setting.
+5. Pi's default session directory for the target cwd.
+
+Except for the rebased CLI path, relative storage paths and relative configuration roots retain the child's cwd interpretation. Pi reads `sessionDir` before project trust is resolved; this does not grant trust to other project resources.
+
+Existing sessions, including valid header-only interrupted sessions, ignore `initialContext` and are not forked or renamed. New sessions use the directory the child would normally select. Changing storage configuration does not search other directories, copy files, repair sessions, migrate history, or merge conversations. See the [upgrade steps](#upgrade-existing-installations) before switching extension versions.
 
 ### Delegation metadata
 

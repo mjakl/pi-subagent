@@ -34,6 +34,19 @@ function resolvePathArg(value, options = {}) {
   return value;
 }
 
+function resolveSystemPromptArg(value) {
+  const resolved = path.resolve(process.cwd(), value);
+  try {
+    if (fs.statSync(resolved).isFile()) {
+      fs.accessSync(resolved, fs.constants.R_OK);
+      return resolved;
+    }
+  } catch {
+    // Pi treats non-file inputs as literal prompt text, not path-like strings.
+  }
+  return value;
+}
+
 /** Build child trust flags without approving a different working directory. */
 export function getInheritedProjectTrustArgs(projectTrustOverride, inheritProjectApproval) {
   if (projectTrustOverride === false) return ["--no-approve"];
@@ -50,7 +63,7 @@ export function selectInheritedPiArgv(argv, env) {
  * Parse process.argv into groups used for child pi invocations.
  *
  * - extensionArgs: forwarded with path resolution
- * - alwaysProxy: forwarded verbatim to every child
+ * - alwaysProxy: forwarded to every child, rebasing existing system-prompt files
  * - fallbackProvider/model/thinking/tools: used only when more specific configuration is absent
  */
 export function parseInheritedCliArgs(argv) {
@@ -166,7 +179,6 @@ export function parseInheritedCliArgs(argv) {
       const [value, skip] = getValue({ allowDashValue: true });
       if (value !== undefined) {
         sessionDir = resolvePathArg(value, { alwaysResolveRelative: true });
-        alwaysProxy.push(flagName, sessionDir);
       }
       i += skip;
       continue;
@@ -179,10 +191,16 @@ export function parseInheritedCliArgs(argv) {
       continue;
     }
 
+    if (flagName === "--system-prompt") {
+      const [value, skip] = getValue({ allowDashValue: true });
+      if (value !== undefined) alwaysProxy.push(flagName, resolveSystemPromptArg(value));
+      i += skip;
+      continue;
+    }
+
     if (
       [
         "--api-key",
-        "--system-prompt",
         "--models",
         "--exclude-tools",
         "-xt",

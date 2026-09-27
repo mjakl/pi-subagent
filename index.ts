@@ -33,7 +33,7 @@ import {
 import { formatCallsSummary, writeOutputArtifact } from "./output.js";
 import { renderCall, renderResult } from "./render.js";
 import { parseInheritedCliArgs, selectInheritedPiArgv } from "./runner-cli.js";
-import { ensureDefaultSessionDir, getDefaultSessionDirPath } from "./session-paths.js";
+import { getDefaultSessionDirPath, resolveChildSessionDir } from "./session-paths.js";
 import { mapConcurrent, runAgent, type ParentModel } from "./runner.js";
 import { acquireSessionLocks, releaseSessionLocks, type SessionLockTarget } from "./session-lock.js";
 import {
@@ -66,6 +66,7 @@ const SESSION_ID_NAMESPACE = "pi-subagent/v1";
 const SESSION_ID_PREFIX = "subagent.";
 const SESSION_HANDLE_MAX_LENGTH = 120;
 const inheritedPiArgv = selectInheritedPiArgv(process.argv, process.env);
+const inheritedSessionDir = parseInheritedCliArgs(inheritedPiArgv).sessionDir;
 
 // ---------------------------------------------------------------------------
 // Tool parameter schema
@@ -161,6 +162,7 @@ interface NormalizedCall {
   initialContext: InitialContext;
   sessionHandle?: string;
   session?: SubagentSessionDetails;
+  persistentSessionDir?: string;
   inactivityTimeoutMs?: number;
   timeoutMs?: number;
 }
@@ -609,23 +611,10 @@ function getActiveSessionError(
   return null;
 }
 
-async function resolveSessionCreationState(
-  calls: NormalizedCall[],
-  sessionDir: string | undefined,
-): Promise<void> {
-  const sessionIdsByListKey = new Map<string, Set<string>>();
-
+function resolveSessionCreationState(calls: NormalizedCall[]): void {
   for (const call of calls) {
     if (!call.session) continue;
-    const key = `${sessionDir ?? ""}\0${call.effectiveCwd}`;
-    let ids = sessionIdsByListKey.get(key);
-    if (!ids) {
-      const sessions = await SessionManager.list(call.effectiveCwd, sessionDir);
-      ids = new Set(sessions.map((session) => session.id));
-      sessionIdsByListKey.set(key, ids);
-    }
-
-    const exists = ids.has(call.session.id);
+    const exists = SessionManager.findById(call.effectiveCwd, call.session.id, call.persistentSessionDir);
     call.session.created = !exists;
     call.session.initialContextApplied = exists ? null : call.initialContext;
   }
@@ -667,19 +656,12 @@ function getNamedSessionParentError(
   return "Named subagent sessions require a persisted parent Pi session. Omit `session` for ephemeral delegation, or run the parent without --no-session.";
 }
 
-function sessionBaseDir(call: NormalizedCall, sessionDir: string | undefined): string {
-  return sessionDir ?? ensureDefaultSessionDir(call.effectiveCwd);
-}
-
-function getSessionLockTargets(
-  calls: NormalizedCall[],
-  sessionDir: string | undefined,
-): SessionLockTarget[] {
+function getSessionLockTargets(calls: NormalizedCall[]): SessionLockTarget[] {
   return calls
     .filter((call) => call.session)
     .map((call) => ({
       sessionId: call.session!.id,
-      lockRoot: path.join(sessionBaseDir(call, sessionDir), ".pi-subagent-locks"),
+      lockRoot: path.join(call.persistentSessionDir!, ".pi-subagent-locks"),
       agent: call.agent,
       handle: call.session!.handle,
       cwd: call.effectiveCwd,
@@ -897,7 +879,14 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
           }
         }
 
-        const persistentSessionDir = getPersistentSessionDir(ctx as ExtensionExecutionContext);
+        const runtimeSessionDir = getPersistentSessionDir(ctx as ExtensionExecutionContext);
+        for (const call of calls) {
+          if (call.session) {
+            call.persistentSessionDir = resolveChildSessionDir(
+              call.effectiveCwd, inheritedSessionDir, runtimeSessionDir,
+            );
+          }
+        }
 
         const activeSessionError = getActiveSessionError(calls, activeSessionIds);
         if (activeSessionError) {
@@ -908,7 +897,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
         }
 
         const lockResult = acquireSessionLocks(
-          getSessionLockTargets(calls, persistentSessionDir),
+          getSessionLockTargets(calls),
         );
         if (lockResult.error) {
           return {
@@ -924,7 +913,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
 
         try {
           try {
-            await resolveSessionCreationState(calls, persistentSessionDir);
+            resolveSessionCreationState(calls);
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             return {
@@ -959,7 +948,6 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
             calls,
             parentSessionId,
             parentSessionSnapshotJsonl,
-            persistentSessionDir,
             parentModel,
             agents,
             ctx.cwd,
@@ -987,7 +975,6 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
     calls: NormalizedCall[],
     parentSessionId: string,
     parentSessionSnapshotJsonl: string | undefined,
-    persistentSessionDir: string | undefined,
     parentModel: ParentModel | undefined,
     agents: AgentConfig[],
     defaultCwd: string,
@@ -1046,7 +1033,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
               initialContext: call.initialContext,
               parentSessionSnapshotJsonl,
               session: call.session,
-              persistentSessionDir,
+              persistentSessionDir: call.persistentSessionDir,
               parentDepth: currentDepth,
               parentAgentStack: ancestorAgentStack,
               maxDepth,

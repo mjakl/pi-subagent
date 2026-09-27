@@ -10,9 +10,8 @@
  *   - Project agents: .pi/agents/*.md  (walks up from cwd)
  */
 
-import { CONFIG_DIR_NAME, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 
 export type AgentScope = "user" | "project" | "both";
@@ -151,8 +150,7 @@ function parseSessionHint(raw: unknown, filePath: string): string | undefined {
 }
 
 export function getUserAgentsDir(): string {
-	const configDir = process.env["PI_CODING_AGENT_DIR"]?.trim() || path.join(os.homedir(), ".pi", "agent");
-	return path.join(configDir, "agents");
+	return path.join(getAgentDir(), "agents");
 }
 
 /** Walk up from `cwd` looking for a project-local agents directory. */

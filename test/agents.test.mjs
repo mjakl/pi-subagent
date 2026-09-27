@@ -16,43 +16,14 @@ function writeAgent(dir, name, description = `${name} description`) {
 
 function createTestableAgentsModule() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-agents-"));
-  const stubPath = path.join(tmpDir, "pi-coding-agent-stub.mjs");
   const modulePath = path.join(tmpDir, "agents.testable.ts");
   const sourcePath = path.join(process.cwd(), "agents.ts");
-
-  fs.writeFileSync(
-    stubPath,
-    `export const CONFIG_DIR_NAME = ".pi";
-export function parseFrontmatter(content) {
-      const match = content.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---\\r?\\n?([\\s\\S]*)$/);
-      if (!match) return { frontmatter: {}, body: content };
-      const frontmatter = {};
-      for (const line of match[1].split(/\\r?\\n/)) {
-        if (!line.trim()) continue;
-        const separator = line.indexOf(":");
-        if (separator === -1) continue;
-        const key = line.slice(0, separator).trim();
-        const value = line.slice(separator + 1).trim();
-        frontmatter[key] = value === "true"
-          ? true
-          : value === "false"
-            ? false
-            : value === "[]"
-              ? []
-              : /^\\d+$/.test(value)
-                ? Number(value)
-                : value;
-      }
-      return { frontmatter, body: match[2] ?? "" };
-    }
-`,
-  );
 
   const source = fs
     .readFileSync(sourcePath, "utf-8")
     .replace(
       'from "@earendil-works/pi-coding-agent"',
-      'from "./pi-coding-agent-stub.mjs"',
+      `from ${JSON.stringify(import.meta.resolve("@earendil-works/pi-coding-agent"))}`,
     );
   fs.writeFileSync(modulePath, source);
 

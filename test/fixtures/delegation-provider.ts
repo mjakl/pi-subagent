@@ -1,4 +1,5 @@
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
 import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -34,7 +35,7 @@ export default function (pi: ExtensionAPI) {
       contextWindow: 1_000_000,
       maxTokens: 4096,
     })),
-    streamSimple(model, context) {
+    streamSimple(model, context, options) {
       const stream = createAssistantMessageEventStream();
       const output: AssistantMessage = {
         role: "assistant",
@@ -49,57 +50,60 @@ export default function (pi: ExtensionAPI) {
         stopReason: "stop",
         timestamp: Date.now(),
       };
-      try {
-        const user = context.messages.findLast((message) => message.role === "user")!;
-        const text = typeof user.content === "string" ? user.content : user.content
-          .filter((block) => block.type === "text").map((block) => block.text).join("");
-        const plan = JSON.parse(text);
-        const file = ctx.sessionManager.getSessionFile();
-        log({
-          kind: "request",
-          tag: plan.tag,
-          lastRole: context.messages.at(-1)?.role,
-          sessionId: ctx.sessionManager.getSessionId(),
-          thinking: pi.getThinkingLevel(),
-          argv: process.argv,
-          header: ctx.sessionManager.getHeader(),
-          file: file ?? null,
-          diskEntries: file && existsSync(file)
-            ? readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line)) : [],
-          entries: ctx.sessionManager.getEntries(),
-          contextMessages: context.messages,
-          tools: pi.getAllTools().map((tool) => tool.name),
-          depth: process.env.PI_SUBAGENT_DEPTH ?? "0",
-          temporaryParent: process.env.PI_SUBAGENT_TEMP_PARENT_SESSION ?? "0",
-          launchPayload: process.env.PI_SUBAGENT_DELEGATION ?? null,
-        });
-        stream.push({ type: "start", partial: output });
-        if (context.messages.at(-1)?.role === "user" && plan.calls) {
-          const toolCall = {
-            type: "toolCall" as const,
-            id: `delegate-${plan.tag}`,
-            name: "subagent",
-            arguments: { calls: plan.calls },
-          };
-          output.content.push(toolCall);
-          output.stopReason = "toolUse";
-          stream.push({ type: "toolcall_start", contentIndex: 0, partial: output });
-          stream.push({ type: "toolcall_delta", contentIndex: 0, delta: JSON.stringify(toolCall.arguments), partial: output });
-          stream.push({ type: "toolcall_end", contentIndex: 0, toolCall, partial: output });
-        } else {
-          const text = `fixture:${plan.tag}`;
-          output.content.push({ type: "text", text });
-          stream.push({ type: "text_start", contentIndex: 0, partial: output });
-          stream.push({ type: "text_delta", contentIndex: 0, delta: text, partial: output });
-          stream.push({ type: "text_end", contentIndex: 0, content: text, partial: output });
+      void (async () => {
+        try {
+          const user = context.messages.findLast((message) => message.role === "user")!;
+          const text = typeof user.content === "string" ? user.content : user.content
+            .filter((block) => block.type === "text").map((block) => block.text).join("");
+          const plan = JSON.parse(text);
+          const file = ctx.sessionManager.getSessionFile();
+          log({
+            kind: "request",
+            tag: plan.tag,
+            lastRole: context.messages.at(-1)?.role,
+            sessionId: ctx.sessionManager.getSessionId(),
+            thinking: pi.getThinkingLevel(),
+            argv: process.argv,
+            header: ctx.sessionManager.getHeader(),
+            file: file ?? null,
+            diskEntries: file && existsSync(file)
+              ? readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line)) : [],
+            entries: ctx.sessionManager.getEntries(),
+            contextMessages: context.messages,
+            tools: pi.getAllTools().map((tool) => tool.name),
+            depth: process.env.PI_SUBAGENT_DEPTH ?? "0",
+            temporaryParent: process.env.PI_SUBAGENT_TEMP_PARENT_SESSION ?? "0",
+            launchPayload: process.env.PI_SUBAGENT_DELEGATION ?? null,
+          });
+          if (plan.delayMs) await delay(plan.delayMs, undefined, { signal: options?.signal });
+          stream.push({ type: "start", partial: output });
+          if (context.messages.at(-1)?.role === "user" && plan.calls) {
+            const toolCall = {
+              type: "toolCall" as const,
+              id: `delegate-${plan.tag}`,
+              name: "subagent",
+              arguments: { calls: plan.calls },
+            };
+            output.content.push(toolCall);
+            output.stopReason = "toolUse";
+            stream.push({ type: "toolcall_start", contentIndex: 0, partial: output });
+            stream.push({ type: "toolcall_delta", contentIndex: 0, delta: JSON.stringify(toolCall.arguments), partial: output });
+            stream.push({ type: "toolcall_end", contentIndex: 0, toolCall, partial: output });
+          } else {
+            const text = `fixture:${plan.tag}`;
+            output.content.push({ type: "text", text });
+            stream.push({ type: "text_start", contentIndex: 0, partial: output });
+            stream.push({ type: "text_delta", contentIndex: 0, delta: text, partial: output });
+            stream.push({ type: "text_end", contentIndex: 0, content: text, partial: output });
+          }
+          stream.push({ type: "done", reason: output.stopReason, message: output });
+        } catch (error) {
+          output.stopReason = "error";
+          const failed = { ...output, errorMessage: String(error) };
+          stream.push({ type: "error", reason: "error", error: failed });
         }
-        stream.push({ type: "done", reason: output.stopReason, message: output });
-      } catch (error) {
-        output.stopReason = "error";
-        const failed = { ...output, errorMessage: String(error) };
-        stream.push({ type: "error", reason: "error", error: failed });
-      }
-      stream.end();
+        stream.end();
+      })();
       return stream;
     },
   });
