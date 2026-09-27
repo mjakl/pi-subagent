@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createJiti } from "jiti";
-import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { ProjectTrustStore, SessionManager } from "@earendil-works/pi-coding-agent";
 
 const jiti = createJiti(import.meta.url);
 const {
@@ -283,5 +283,53 @@ test("extension lifecycle excludes untrusted project agents consistently", async
     if (previousConfigDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousConfigDir;
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("named-session setup failures and pre-cancelled calls release the resolved storage lock", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-setup-lock-"));
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  const previousSessionDir = process.env.PI_CODING_AGENT_SESSION_DIR;
+  process.env.PI_CODING_AGENT_DIR = path.join(dir, "agent");
+  delete process.env.PI_CODING_AGENT_SESSION_DIR;
+  const target = path.join(dir, "target");
+  fs.mkdirSync(path.join(target, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(target, ".pi", "settings.json"), JSON.stringify({ sessionDir: "storage" }));
+  writeAgent(path.join(process.env.PI_CODING_AGENT_DIR, "agents"), "worker");
+  try {
+    const harness = createPiHarness();
+    const tool = harness.tools.get("subagent");
+    const ctx = createContext(dir, false);
+    const manager = SessionManager.create(dir);
+    ctx.sessionManager = manager;
+    const lockRoot = path.join(target, "storage", ".pi-subagent-locks");
+    const call = { agent: "worker", prompt: "No provider calls", session: "setup", cwd: target, initialContext: "parent" };
+    const getHeader = manager.getHeader.bind(manager);
+    manager.getHeader = () => undefined;
+    const failed = await tool.execute("snapshot-failure", { calls: [call] }, undefined, undefined, ctx);
+    assert.match(failed.content[0].text, /failed to snapshot/);
+    assert.deepEqual(fs.readdirSync(lockRoot), []);
+    manager.getHeader = getHeader;
+    const controller = new AbortController();
+    controller.abort();
+    const cancelled = await tool.execute("cancelled", { calls: [call] }, controller.signal, undefined, ctx);
+    assert.equal(cancelled.details.failed, true);
+    assert.equal(cancelled.details.results[0].stopReason, "aborted");
+    assert.deepEqual(fs.readdirSync(lockRoot), []);
+
+    // A custom SDK/runtime directory keeps precedence over inherited env and target settings.
+    const runtimeDirectory = path.join(dir, "runtime-storage");
+    ctx.sessionManager = SessionManager.create(dir, runtimeDirectory);
+    process.env.PI_CODING_AGENT_SESSION_DIR = path.join(dir, "env-storage");
+    const unknown = await tool.execute("unknown", { calls: [{ ...call, agent: "missing", initialContext: "empty" }] }, undefined, undefined, ctx);
+    assert.match(unknown.content[0].text, /Unknown agent/);
+    assert.deepEqual(fs.readdirSync(path.join(runtimeDirectory, ".pi-subagent-locks")), []);
+    assert.equal(fs.existsSync(process.env.PI_CODING_AGENT_SESSION_DIR), false);
+  } finally {
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previous;
+    if (previousSessionDir === undefined) delete process.env.PI_CODING_AGENT_SESSION_DIR;
+    else process.env.PI_CODING_AGENT_SESSION_DIR = previousSessionDir;
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

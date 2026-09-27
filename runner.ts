@@ -201,7 +201,8 @@ export function buildModelArgs(
   const configuredModel = callModel ?? agentModel;
   if (configuredModel) {
     return [
-      ...(fallbackProvider ? ["--provider", fallbackProvider] : []),
+      // Pi distinguishes provider-qualified values from raw slash-containing IDs.
+      ...(fallbackProvider && !configuredModel.includes("/") ? ["--provider", fallbackProvider] : []),
       "--model",
       configuredModel,
     ];
@@ -239,9 +240,8 @@ export function buildPiArgs(
     ...projectTrustArgs,
   ];
 
-  if (session && persistentSessionDir && !inheritedCliArgs.sessionDir) {
-    args.push("--session-dir", persistentSessionDir);
-  }
+  const sessionDir = session ? persistentSessionDir : inheritedCliArgs.sessionDir;
+  if (sessionDir) args.push("--session-dir", sessionDir);
 
   if (session) {
     // Explicit loading also works when discovery is disabled or cwd changes.
@@ -315,7 +315,7 @@ export interface RunAgentOptions {
   parentSessionSnapshotJsonl?: string;
   /** Optional named persistent subagent session. */
   session?: SubagentSessionDetails;
-  /** Optional persistent session directory inherited from the parent runtime. */
+  /** Absolute storage directory frozen during named-session preflight. */
   persistentSessionDir?: string;
   /** Current delegation depth of the caller process. */
   parentDepth: number;

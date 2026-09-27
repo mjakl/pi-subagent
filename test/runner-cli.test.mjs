@@ -170,11 +170,10 @@ test("resolves inherited relative resource paths against the parent cwd", () => 
       "my-org/dark",
       "--theme",
       themePath,
-      "--session-dir",
-      sessionDir,
       "--system-prompt",
       "You are helpful",
     ]);
+    assert.equal(parsed.sessionDir, sessionDir);
   } finally {
     process.chdir(previousCwd);
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -292,8 +291,6 @@ test("consumes dash-prefixed values for known value flags", () => {
     ]);
 
     assert.deepEqual(parsed.alwaysProxy, [
-      "--session-dir",
-      path.join(tmpDir, "-sessions"),
       "--api-key",
       "-secret",
       "--custom-flag",

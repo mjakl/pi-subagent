@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { resolveChildSessionDir } from "../session-paths.ts";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const rpcEntry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent/rpc-entry"));
@@ -183,11 +187,13 @@ function setup(t, { workerThinking } = {}) {
     }
   });
   return {
-    cwd, sessionDir, tmp, log,
-    start({ rootOnly = false, rootId = "delegation-test-root", launchPayload, thinking, model = "deterministic", cli = false } = {}) {
-      const launchEnv = { ...env };
+    dir, cwd, agentDir, sessionDir, tmp, log,
+    start({ rootOnly = false, rootId = "delegation-test-root", launchPayload, thinking, model = "deterministic", cli = false,
+      launchCwd = cwd, storage = sessionDir, envOverrides = {},
+    } = {}) {
+      const launchEnv = { ...env, ...envOverrides };
       if (launchPayload) launchEnv.PI_SUBAGENT_DELEGATION = JSON.stringify(launchPayload);
-      const client = new Rpc(cwd, launchEnv, [
+      const client = new Rpc(launchCwd, launchEnv, [
         "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-builtin-tools",
         "--extension", provider,
         "--extension", rootOnly ? path.join(root, "test/fixtures/delegation-root-only.ts") : path.join(root, "index.ts"),
@@ -195,7 +201,7 @@ function setup(t, { workerThinking } = {}) {
         ...(rootOnly ? [] : ["--extension", helper]),
         "--provider", "delegation-test", "--model", model,
         ...(thinking ? ["--thinking", thinking] : []),
-        "--session-id", rootId, "--session-dir", sessionDir,
+        "--session-id", rootId, ...(storage === null ? [] : ["--session-dir", storage]),
       ], cli);
       clients.push(client);
       return client;
@@ -230,7 +236,7 @@ test("real Pi persists only new named origins, bound to the child header and imm
   const beforeFirst = fixture.observation("first-child");
   assert.equal(first.session.id, beforeFirst.header.id);
   assert.equal(beforeFirst.diskEntries.length, 0, "appendEntry remains buffered until a real assistant response");
-  assert.deepEqual(beforeFirst.entries.filter((entry) => entry.type === "message").map((entry) => entry.message.role), ["user"]);
+  assert.deepEqual(beforeFirst.entries.filter((entry) => entry.type === "message").map((entry) => entry.message.role), ["system", "user"]);
   assert.equal(beforeFirst.entries.some((entry) => entry.type === "custom_message"), false, "no placeholder custom messages");
   assert.equal(origins(beforeFirst.entries).length, 1, "child appended metadata before its first model response");
   assert.equal(JSON.stringify(beforeFirst.contextMessages).includes(customType), false, "metadata is not model context");
@@ -386,4 +392,224 @@ test("real Pi explicitly loads the metadata helper when child extension discover
   assert.equal(observation.diskEntries.length, 0, "helper does not force a placeholder flush");
   await rpc.close();
   assert.equal(rpc.exit.code, 0, rpc.stderr);
+});
+
+test("child storage composition matches real Pi startup precedence and relative paths", { timeout: 120_000 }, async (t) => {
+  for (const scenario of [
+    { name: "CLI before runtime/env/settings", cli: "cli", runtime: "runtime", env: "env", project: "project", global: "global", expected: "cli" },
+    { name: "runtime before env/settings", runtime: "runtime", env: "env", project: "project", expected: "runtime" },
+    { name: "relative runtime", runtime: "./runtime", expected: "runtime" },
+    { name: "absolute env before settings", env: "absolute", project: "project", expected: "absolute" },
+    { name: "relative env before settings", env: "env", project: "project", expected: "env" },
+    { name: "tilde env", env: "~/sessions", expected: "~/sessions" },
+    { name: "project before global", project: "project", global: "global", expected: "project" },
+    { name: "absolute project", project: "absolute", expected: "absolute" },
+    { name: "tilde project", project: "~/sessions", expected: "~/sessions" },
+    { name: "global relative", global: "global", expected: "global" },
+    { name: "empty env falls through", env: "", global: "global", expected: "global" },
+    { name: "default" },
+    { name: "relative config root settings", agent: "relative-agent", global: "global", expected: "global" },
+    { name: "relative config root default", agent: "relative-agent" },
+    { name: "tilde config root default", agent: "~/custom-pi" },
+  ]) {
+    await t.test(scenario.name, async (t) => {
+      const fixture = setup(t);
+      const home = path.join(fixture.dir, "home");
+      const agent = scenario.agent ?? fixture.agentDir;
+      const agentDir = agent.startsWith("~/") ? path.join(home, agent.slice(2)) : path.resolve(fixture.cwd, agent);
+      fs.mkdirSync(agentDir, { recursive: true });
+      const value = (s) => s === "absolute" ? path.join(fixture.dir, "absolute") : s;
+      fs.writeFileSync(path.join(agentDir, "settings.json"), JSON.stringify({ sessionDir: value(scenario.global) }));
+      fs.mkdirSync(path.join(fixture.cwd, ".pi"));
+      fs.writeFileSync(path.join(fixture.cwd, ".pi", "settings.json"), JSON.stringify({ sessionDir: value(scenario.project) }));
+      const cli = scenario.cli && path.resolve(fixture.dir, scenario.cli);
+      const runtime = value(scenario.runtime);
+      const env = { HOME: home, USERPROFILE: home, PI_CODING_AGENT_DIR: agent, PI_CODING_AGENT_SESSION_DIR: value(scenario.env) };
+      const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
+      let resolved;
+      try {
+        for (const [key, val] of Object.entries(env)) {
+          if (val === undefined) delete process.env[key];
+          else process.env[key] = val;
+        }
+        resolved = resolveChildSessionDir(fixture.cwd, cli, runtime);
+      } finally {
+        for (const [key, val] of Object.entries(previous)) {
+          if (val === undefined) delete process.env[key];
+          else process.env[key] = val;
+        }
+      }
+      const rpc = fixture.start({ storage: cli ?? runtime ?? null, envOverrides: env });
+      const state = await rpc.command("get_state");
+      assert.equal(resolved, path.resolve(fixture.cwd, path.dirname(state.sessionFile)));
+      if (scenario.expected) {
+        const expected = scenario.expected.startsWith("~/") ? path.join(home, scenario.expected.slice(2))
+          : cli ?? path.resolve(fixture.cwd, value(scenario.expected));
+        assert.equal(resolved, expected);
+      } else {
+        assert.ok(resolved.startsWith(path.join(agentDir, "sessions") + path.sep));
+      }
+      await rpc.close();
+      assert.equal(rpc.exit.code, 0, rpc.stderr);
+    });
+  }
+});
+
+test("named calls preserve existing target histories and header-only sessions in configured storage", { timeout: 90_000 }, async (t) => {
+  const fixture = setup(t);
+  const rpc = fixture.start({ storage: null });
+  const parent = await rpc.command("get_state");
+  const target = path.join(fixture.dir, "target");
+  const other = path.join(fixture.dir, "other");
+  for (const cwd of [target, other]) {
+    fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
+    fs.writeFileSync(path.join(cwd, ".pi", "settings.json"), JSON.stringify({ sessionDir: "child-sessions" }));
+  }
+  const directory = path.join(target, "child-sessions");
+  const files = new Map();
+  for (const handle of ["history", "header-only"]) {
+    const digest = createHash("sha256").update(JSON.stringify([
+      "pi-subagent/v1", parent.sessionId, fs.realpathSync(target), "worker", handle,
+    ])).digest("hex").slice(0, 16);
+    const session = SessionManager.create(target, directory, { id: `subagent.${digest}` });
+    if (handle === "history") {
+      session.appendMessage({ role: "user", content: "Keep my history", timestamp: 1 });
+      session.appendMessage({ role: "assistant", content: [{ type: "text", text: "Previous answer" }],
+        timestamp: 2, provider: "delegation-test", api: "delegation-test-api", model: "deterministic", stopReason: "stop",
+        usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      });
+      session.appendSessionInfo("User-chosen name");
+    } else {
+      fs.writeFileSync(session.getSessionFile(), JSON.stringify(session.getHeader()) + "\n");
+    }
+    files.set(handle, { file: session.getSessionFile(), content: fs.readFileSync(session.getSessionFile(), "utf8") });
+  }
+  const calls = ["history", "header-only", "new"].map(handle =>
+    childCall(`storage-${handle}`, { cwd: target, session: handle, initialContext: "parent" }));
+  calls.push(childCall("storage-other", { cwd: other, session: "new" }));
+  const children = results(await rpc.prompt({ tag: "storage-parent", calls }));
+  for (const child of children) {
+    const handle = child.session.handle;
+    const isOther = child.session.cwd === other;
+    const observation = fixture.observation(isOther ? "storage-other" : `storage-${handle}`);
+    const expectedDirectory = path.join(child.session.cwd, "child-sessions");
+    assert.equal(path.dirname(observation.file), expectedDirectory);
+    assert.equal(observation.argv.filter(arg => arg === "--session-dir").length, 1);
+    assert.equal(observation.argv[observation.argv.indexOf("--session-dir") + 1], expectedDirectory);
+    assert.deepEqual(fs.readdirSync(path.join(expectedDirectory, ".pi-subagent-locks")), [], "completion releases corrected lock");
+    const previous = files.get(handle);
+    if (previous) {
+      assert.equal(child.session.created, false);
+      assert.equal(child.session.initialContextApplied, null);
+      assert.equal(observation.file, previous.file);
+      assert.equal(observation.argv.includes("--fork"), false);
+      assert.equal(observation.argv.includes("--name"), false);
+      assert.ok(fs.readFileSync(previous.file, "utf8").startsWith(previous.content), "existing bytes remain unchanged");
+      assert.deepEqual(ownOrigins(jsonl(previous.file)), [], "continuations do not gain creation metadata");
+      if (handle === "history") {
+        assert.equal(SessionManager.open(previous.file, directory).getSessionName(), "User-chosen name");
+        assert.ok(observation.contextMessages.some(m => m.role === "user" && m.content === "Keep my history"));
+      }
+    } else {
+      assert.equal(child.session.created, true);
+      assert.equal(observation.argv.includes("--fork"), !isOther);
+      assertOrigin(jsonl(observation.file), parent.sessionId, "worker", handle);
+    }
+  }
+  const original = files.get("history").file;
+  const originalContent = fs.readFileSync(original, "utf8");
+  fs.writeFileSync(path.join(target, ".pi", "settings.json"), JSON.stringify({ sessionDir: "changed-storage" }));
+  const [changed] = results(await rpc.prompt({ tag: "changed-storage", calls: [childCall("changed-child", { cwd: target, session: "history" })] }));
+  assert.equal(changed.session.id, children[0].session.id, "configuration does not change session identity");
+  assert.equal(changed.session.created, true, "no search for the old file in another directory");
+  assert.equal(path.dirname(fixture.observation("changed-child").file), path.join(target, "changed-storage"));
+  assert.equal(fs.readFileSync(original, "utf8"), originalContent, "no copying, migration, or repair of the original");
+  await rpc.close();
+  assert.equal(rpc.exit.code, 0, rpc.stderr);
+});
+
+test("relative parent CLI storage is rebased before delegating to another cwd", { timeout: 45_000 }, async (t) => {
+  const fixture = setup(t);
+  const target = path.join(fixture.dir, "target");
+  fs.mkdirSync(path.join(target, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(target, ".pi", "settings.json"), JSON.stringify({ sessionDir: "wrong-settings-storage" }));
+  const rpc = fixture.start({
+    storage: "./parent-sessions",
+    envOverrides: { PI_CODING_AGENT_SESSION_DIR: "wrong-env-storage" },
+  });
+  results(await rpc.prompt({ tag: "relative-cli", calls: [childCall("relative-cli-child", { cwd: target, session: "cli" })] }));
+  const observation = fixture.observation("relative-cli-child");
+  const directory = path.join(fixture.cwd, "parent-sessions");
+  assert.equal(path.dirname(observation.file), directory);
+  assert.equal(observation.argv[observation.argv.indexOf("--session-dir") + 1], directory);
+  assert.deepEqual(fs.readdirSync(path.join(directory, ".pi-subagent-locks")), []);
+  assert.equal(fs.existsSync(path.join(target, "parent-sessions")), false);
+  await rpc.close();
+  assert.equal(rpc.exit.code, 0, rpc.stderr);
+});
+
+test("current parents share the corrected lock and release it after cancellation and deadlines", { timeout: 90_000 }, async (t) => {
+  const fixture = setup(t);
+  const secondCwd = path.join(fixture.dir, "second-parent");
+  const target = path.join(fixture.dir, "target");
+  fs.mkdirSync(secondCwd);
+  fs.mkdirSync(path.join(target, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(target, ".pi", "settings.json"), JSON.stringify({ sessionDir: "storage" }));
+  // Equal parent IDs with separate parent storage avoid concurrent writes to a parent transcript.
+  const first = fixture.start({ storage: null });
+  const second = fixture.start({ storage: null, launchCwd: secondCwd });
+  await Promise.all([first.command("get_state"), second.command("get_state")]);
+  const slowCall = (tag, options = {}) => childCall(tag, {
+    cwd: target, session: "shared", prompt: JSON.stringify({ tag, delayMs: 60_000 }), ...options,
+  });
+  const from = first.events.length;
+  await first.command("prompt", { message: JSON.stringify({ tag: "lock-owner", calls: [slowCall("locked-child")] }) });
+  const pending = first.wait(event => event.type === "agent_settled", from);
+  pending.catch(() => {});
+  const deadline = Date.now() + 15_000;
+  while (!jsonl(fixture.log).some(record => record.kind === "request" && record.tag === "locked-child")) {
+    assert.ok(Date.now() < deadline, "child reaches the deterministic provider");
+    await delay(25);
+  }
+  const observation = fixture.observation("locked-child");
+  const lockRoot = path.join(target, "storage", ".pi-subagent-locks");
+  const lockPath = path.join(lockRoot, `${observation.sessionId}.lock`);
+  assert.equal(fs.existsSync(path.join(lockPath, "owner.json")), true);
+  const before = jsonl(fixture.log).filter(record => record.kind === "process").length;
+  const conflict = await second.prompt({ tag: "lock-contender", calls: [childCall("cannot-run", { cwd: target, session: "shared" })] });
+  const toolResult = (event) => event.messages.findLast(message => message.role === "toolResult" && message.toolName === "subagent");
+  assert.match(JSON.stringify(toolResult(conflict)), /already running/);
+  assert.equal(jsonl(fixture.log).filter(record => record.kind === "process").length, before);
+  const duplicate = await second.prompt({ tag: "duplicate", calls: [
+    childCall("dup-one", { cwd: target, session: "duplicate" }),
+    childCall("dup-two", { cwd: target, session: "duplicate" }),
+  ] });
+  assert.match(JSON.stringify(toolResult(duplicate)), /same persistent session/);
+  assert.equal(jsonl(fixture.log).filter(record => record.kind === "process").length, before);
+  results(await second.prompt({ tag: "unrelated", calls: [childCall("unrelated-child", { cwd: target, session: "unrelated" })] }));
+  assert.equal(fs.existsSync(lockPath), true, "unrelated session runs without releasing the owner's lock");
+  await first.command("abort");
+  await pending;
+  assert.deepEqual(fs.readdirSync(lockRoot), [], "cancellation waits for child exit before release");
+
+  for (const [name, timers, error] of [
+    ["wall", { timeout: 1 }, /configured 1s run timeout/],
+    ["idle", { inactivityTimeout: 1 }, /inactivity timeout/],
+  ]) {
+    const timedOut = await second.prompt({ tag: `${name}-timeout`, calls: [slowCall(`${name}-child`, { session: name, ...timers })] });
+    assert.match(JSON.stringify(toolResult(timedOut)), error);
+    assert.equal(toolResult(timedOut).isError, true);
+    assert.deepEqual(fs.readdirSync(lockRoot), [], `${name} timeout releases the lock`);
+  }
+
+  fs.mkdirSync(lockPath);
+  fs.writeFileSync(path.join(lockPath, "owner.json"), JSON.stringify({ updatedAt: "2000-01-01T00:00:00.000Z" }));
+  const stale = await second.prompt({ tag: "stale-lock", calls: [childCall("stale-cannot-run", { cwd: target, session: "shared" })] });
+  assert.match(JSON.stringify(toolResult(stale)), /appears stale/);
+  assert.ok(JSON.stringify(toolResult(stale)).includes(lockPath));
+  assert.equal(fs.existsSync(lockPath), true, "stale locks are not removed automatically");
+  await first.close();
+  await second.close();
+  assert.equal(first.exit.code, 0, first.stderr);
+  assert.equal(second.exit.code, 0, second.stderr);
 });
