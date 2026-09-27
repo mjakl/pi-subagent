@@ -150,6 +150,56 @@ test("registers both cycle-prevention CLI flag forms", () => {
   assert.equal(harness.flags.get("no-subagent-prevent-cycles").type, "boolean");
 });
 
+for (const scenario of ["existing agents", "starter creation", "starter creation failure"]) {
+  test(`startup notifications: ${scenario}`, async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-startup-"));
+    const configDir = path.join(tmpDir, "config");
+    const projectDir = path.join(tmpDir, "project");
+    const previousConfigDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = configDir;
+
+    try {
+      fs.mkdirSync(projectDir);
+      if (scenario === "existing agents") {
+        writeAgent(path.join(configDir, "agents"), "existing");
+      } else if (scenario === "starter creation failure") {
+        fs.writeFileSync(configDir, "not a directory");
+      }
+
+      const harness = createPiHarness();
+      const ctx = createContext(projectDir, false);
+      const notifications = [];
+      ctx.hasUI = true;
+      ctx.ui.notify = (message, type) => notifications.push({ message, type });
+
+      await harness.handlers.get("session_start")[0]({ reason: "startup" }, ctx);
+      const promptPatch = await harness.handlers.get("before_agent_start")[0](
+        { systemPrompt: "base" },
+        ctx,
+      );
+
+      if (scenario === "existing agents") {
+        assert.match(promptPatch.systemPrompt, /\*\*existing\*\* \(user\)/);
+        assert.deepEqual(notifications, []);
+      } else if (scenario === "starter creation") {
+        assert.match(promptPatch.systemPrompt, /\*\*explore\*\* \(user\)/);
+        assert.equal(notifications.length, 1);
+        assert.match(notifications[0].message, /Created starter subagent "explore"/);
+        assert.equal(notifications[0].type, "info");
+      } else {
+        assert.equal(promptPatch, undefined);
+        assert.equal(notifications.length, 1);
+        assert.match(notifications[0].message, /No subagents found\..*Could not create starter agent/);
+        assert.equal(notifications[0].type, "info");
+      }
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousConfigDir;
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+}
+
 test("implicit Pi trust does not enable project-only agents", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-index-"));
   const configDir = path.join(tmpDir, "config");
