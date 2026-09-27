@@ -764,14 +764,6 @@ export default function (pi: ExtensionAPI) {
           `No subagents found. ${starterDiscovery.error}`,
           "info",
         );
-      } else if (discoveredAgents.length > 0) {
-        const list = discoveredAgents
-          .map((a) => `  - ${a.name} (${a.source})`)
-          .join("\n");
-        ctx.ui.notify(
-          `Found ${discoveredAgents.length} subagent(s):\n${list}`,
-          "info",
-        );
       }
     }
   });
