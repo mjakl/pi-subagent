@@ -108,6 +108,16 @@ test("subagent schema uses a Google-compatible initialContext enum", () => {
   assert.equal(timeout.maximum > 1, true);
 });
 
+test("per-call model is optional and can be omitted for inheritance", () => {
+  const schema = createPiHarness().tools.get("subagent").parameters.properties.calls.items;
+  assert.equal(schema.properties.model.type, "string");
+  assert.equal(schema.required.includes("model"), false);
+
+  const result = normalizeCalls([{ agent: "review", prompt: "Review" }], process.cwd());
+  assert.equal(result.error, undefined);
+  assert.equal(result.calls[0].model, undefined);
+});
+
 test("thinking schema and normalization accept exactly the supported per-call levels", () => {
   const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
   const schema = createPiHarness().tools.get("subagent").parameters.properties.calls.items;
