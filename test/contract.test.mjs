@@ -4,6 +4,7 @@ import {
   CALL_FIELDS,
   formatAvailableSubagentsPrompt,
   formatSubagentToolDescription,
+  formatSubagentUsageExample,
   getCallFieldSchemaDescription,
 } from "../contract.ts";
 
@@ -45,6 +46,16 @@ test("schema and generated prompt use the shared call field contract", () => {
     assert.match(prompt, new RegExp(`\\\`${field.name}\\\``));
     assert.match(toolDescription, new RegExp(`\\\`${field.name}\\\``));
   }
+});
+
+test("generic usage example includes only the required call fields", () => {
+  const example = formatSubagentUsageExample();
+
+  assert.match(example, /"agent": "agent-name"/);
+  assert.match(example, /"prompt": "Prompt sent verbatim to the subagent"/);
+  assert.doesNotMatch(example, /"model"\s*:/);
+  assert.doesNotMatch(example, /"initialContext"\s*:/);
+  assert.doesNotMatch(example, /"session"\s*:/);
 });
 
 test("thinking contract documents levels, precedence, and no current-parent inheritance", () => {

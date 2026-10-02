@@ -115,7 +115,7 @@ function formatDelegationRules(): string {
 }
 
 export function formatSubagentUsageExample(): string {
-  return `Use exactly one top-level \`calls\` array:\n\`\`\`json\n{\n  "calls": [\n    {\n      "agent": "agent-name",\n      "prompt": "Prompt sent verbatim to the subagent",\n      "model": "optional-model",\n      "initialContext": "empty",\n      "session": "optional-logical-handle"\n    }\n  ]\n}\n\`\`\``;
+  return `Use exactly one top-level \`calls\` array:\n\`\`\`json\n{\n  "calls": [\n    {\n      "agent": "agent-name",\n      "prompt": "Prompt sent verbatim to the subagent"\n    }\n  ]\n}\n\`\`\``;
 }
 
 export function formatSubagentUsageErrorExample(): string {
