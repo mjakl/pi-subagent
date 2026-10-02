@@ -59,7 +59,7 @@ npm install
 
 ### Upgrade existing installations
 
-This update corrects where named-session locks are stored. Before using the new extension:
+Version 3.1.0 corrects where named-session locks are stored. Before upgrading from an earlier version:
 
 1. Finish or cancel affected delegations and wait for their child processes to exit.
 2. While idle, restart or reload all affected parent Pi runtimes, including terminal, RPC, and SDK hosts, so they load the new extension before any new delegations.
