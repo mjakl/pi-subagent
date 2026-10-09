@@ -13,6 +13,7 @@ const {
   resolveCallCwd,
   normalizeCalls,
 } = await jiti.import("../index.ts");
+const { parseDeniedAgentNames } = await jiti.import("../agents.ts");
 
 function createPiHarness() {
   const handlers = new Map();
@@ -63,6 +64,112 @@ function createContext(cwd, trusted) {
     },
   };
 }
+
+test("deny policy parses exact names without normalization or wildcard matching", () => {
+  for (const raw of [undefined, "[]", "  []  "]) {
+    const policy = parseDeniedAgentNames(raw);
+    assert.equal(policy.error, undefined);
+    assert.deepEqual([...policy.names], []);
+  }
+  const policy = parseDeniedAgentNames('["worker","Worker"," worker ","worker*","worker"]');
+  assert.equal(policy.error, undefined);
+  assert.deepEqual([...policy.names], ["worker", "Worker", " worker ", "worker*"]);
+  assert.equal(policy.names.has("worker-extra"), false);
+
+  for (const raw of ["", " ", "worker", "[", "null", "{}", '"worker"', '["worker",null]', '["worker",1]', '[true]', '[""]', '["  "]']) {
+    assert.match(parseDeniedAgentNames(raw).error, /Invalid PI_SUBAGENT_DENY_AGENTS.*JSON array.*delegation is disabled/);
+  }
+});
+
+for (const raw of [undefined, "[]", '["worker"]', '[" worker ","worker*"]', '["worker","Worker","worker-extra"]']) {
+  test(`deny policy filters the resolved catalog: ${raw ?? "unset"}`, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-deny-catalog-"));
+    const previous = { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PI_SUBAGENT_DENY_AGENTS: process.env.PI_SUBAGENT_DENY_AGENTS };
+    process.env.PI_CODING_AGENT_DIR = path.join(dir, "config");
+    if (raw === undefined) delete process.env.PI_SUBAGENT_DENY_AGENTS;
+    else process.env.PI_SUBAGENT_DENY_AGENTS = raw;
+    try {
+      const userAgents = path.join(process.env.PI_CODING_AGENT_DIR, "agents");
+      for (const name of ["worker", "worker-extra"]) writeAgent(userAgents, name);
+      fs.writeFileSync(path.join(userAgents, "case-variant.md"), "---\nname: Worker\ndescription: Case-sensitive name\n---\nYou are Worker.\n");
+      writeAgent(path.join(dir, ".pi", "agents"), "worker");
+      new ProjectTrustStore(process.env.PI_CODING_AGENT_DIR).set(dir, true);
+      const harness = createPiHarness();
+      const ctx = createContext(dir, true);
+      await harness.handlers.get("session_start")[0]({}, ctx);
+      const patch = await harness.handlers.get("before_agent_start")[0]({ systemPrompt: "base" }, ctx);
+      if (raw === '["worker","Worker","worker-extra"]') {
+        assert.equal(patch, undefined, "no catalog when every resolved name is denied");
+        assert.deepEqual(fs.readdirSync(userAgents).sort(), ["case-variant.md", "worker-extra.md", "worker.md"], "no fallback agent created for policy-filtered discovery");
+        return;
+      }
+      assert.match(patch.systemPrompt, /\*\*Worker\*\* \(user\)/);
+      assert.match(patch.systemPrompt, /\*\*worker-extra\*\* \(user\)/);
+      if (raw === '["worker"]') {
+        assert.doesNotMatch(patch.systemPrompt, /\*\*worker\*\*/);
+        process.env.PI_SUBAGENT_DENY_AGENTS = "[]";
+        ctx.sessionManager.getSessionId = () => { throw new Error("Denied calls must not inspect sessions"); };
+        for (const calls of [
+          [{ agent: "worker", prompt: "denied" }],
+          [{ agent: "Worker", prompt: "allowed", session: "fresh" }, { agent: " worker ", prompt: "denied", session: "existing" }],
+          [{ agent: "worker", prompt: "denied", session: "existing", initialContext: "parent" }, { agent: "worker-extra", prompt: "allowed" }],
+        ]) {
+          const result = await harness.tools.get("subagent").execute("denied", { calls }, undefined, undefined, ctx);
+          assert.equal(result.details.failed, true);
+          assert.deepEqual(result.details.results, []);
+          assert.match(result.content[0].text, /Blocked by PI_SUBAGENT_DENY_AGENTS.*worker.*No calls were started/);
+        }
+        assert.equal(fs.existsSync(path.join(dir, ".sessions")), false);
+      } else {
+        assert.match(patch.systemPrompt, /\*\*worker\*\* \(project\)/);
+      }
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test("invalid deny configuration disables delegation without discovery or session artifacts", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-invalid-deny-"));
+  const previous = { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PI_SUBAGENT_DENY_AGENTS: process.env.PI_SUBAGENT_DENY_AGENTS };
+  process.env.PI_CODING_AGENT_DIR = path.join(dir, "config");
+  process.env.PI_SUBAGENT_DENY_AGENTS = '["worker",false]';
+  const stderr = [];
+  const originalError = console.error;
+  console.error = (message) => stderr.push(message);
+  try {
+    const harness = createPiHarness();
+    const ctx = createContext(dir, false);
+    const notifications = [];
+    ctx.hasUI = true;
+    ctx.ui.notify = (message, level) => notifications.push({ message, level });
+    ctx.sessionManager.getSessionId = () => { throw new Error("No session access expected"); };
+    await harness.handlers.get("session_start")[0]({}, ctx);
+    assert.equal(await harness.handlers.get("before_agent_start")[0]({ systemPrompt: "base" }, ctx), undefined);
+    // Correcting the ambient environment does not silently replace the loaded policy.
+    process.env.PI_SUBAGENT_DENY_AGENTS = "[]";
+    const result = await harness.tools.get("subagent").execute("invalid", { calls: [{ agent: "worker", prompt: "hello", session: "work" }] }, undefined, undefined, ctx);
+    assert.equal(result.details.failed, true);
+    assert.deepEqual(result.details.results, []);
+    assert.match(result.content[0].text, /Invalid PI_SUBAGENT_DENY_AGENTS/);
+    assert.equal(stderr.length, 1);
+    assert.match(stderr[0], /Invalid PI_SUBAGENT_DENY_AGENTS/);
+    assert.equal(notifications.length, 1);
+    assert.equal(notifications[0].level, "error");
+    assert.deepEqual(fs.readdirSync(dir), []);
+  } finally {
+    console.error = originalError;
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("canonicalizes symlinked per-call working directories", {
   skip: process.platform === "win32",
