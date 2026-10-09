@@ -184,6 +184,9 @@ Notes:
 
 #### Parent-local inline workers
 
+**EXPERIMENTAL:** The configuration and runtime contract for parent-local inline
+workers may evolve.
+
 An agent can own one direct tier of workers without installing separate agent files:
 
 ```markdown
