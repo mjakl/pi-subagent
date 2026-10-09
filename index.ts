@@ -21,7 +21,9 @@ import {
   type AgentConfig,
   MAX_TIMER_SECONDS,
   STARTER_AGENT_NAME,
-  discoverAgentsWithStarter,
+  discoverEffectiveAgentsWithStarter,
+  OWNER_CONTEXT_ENV,
+  agentIdentity,
   parseDeniedAgentNames,
 } from "./agents.js";
 import {
@@ -162,6 +164,7 @@ interface NormalizedCall {
   effectiveCwd: string;
   initialContext: InitialContext;
   sessionHandle?: string;
+  agentIdentity?: string;
   session?: SubagentSessionDetails;
   persistentSessionDir?: string;
   inactivityTimeoutMs?: number;
@@ -573,7 +576,7 @@ function attachSessionIdentities(calls: NormalizedCall[], parentSessionId: strin
     const id = deriveSessionId(
       parentSessionId,
       call.effectiveCwd,
-      call.agent,
+      call.agentIdentity ?? call.agent,
       call.sessionHandle,
     );
     call.session = {
@@ -663,7 +666,7 @@ function getSessionLockTargets(calls: NormalizedCall[]): SessionLockTarget[] {
     .map((call) => ({
       sessionId: call.session!.id,
       lockRoot: path.join(call.persistentSessionDir!, ".pi-subagent-locks"),
-      agent: call.agent,
+      agent: call.agentIdentity ?? call.agent,
       handle: call.session!.handle,
       cwd: call.effectiveCwd,
     }));
@@ -713,6 +716,7 @@ export default function (pi: ExtensionAPI) {
     type: "boolean",
   });
 
+  const ownerContext = process.env[OWNER_CONTEXT_ENV];
   const denyPolicy = parseDeniedAgentNames(process.env.PI_SUBAGENT_DENY_AGENTS);
   if (denyPolicy.error) console.error(`[pi-subagent] ${denyPolicy.error}`);
 
@@ -754,10 +758,19 @@ export default function (pi: ExtensionAPI) {
     }
     if (!canDelegate) return;
 
-    const starterDiscovery = discoverAgentsWithStarter(
-      ctx.cwd,
-      shouldIncludeProjectAgents(ctx.cwd, ctx.isProjectTrusted()),
-    );
+    let starterDiscovery;
+    try {
+      starterDiscovery = discoverEffectiveAgentsWithStarter(
+        ctx.cwd,
+        shouldIncludeProjectAgents(ctx.cwd, ctx.isProjectTrusted()),
+        ownerContext,
+      );
+    } catch (error) {
+      discoveredAgents = [];
+      console.error(`[pi-subagent] ${String(error)}`);
+      if (ctx.hasUI) ctx.ui.notify(String(error), "error");
+      return;
+    }
     const discovery = starterDiscovery.discovery;
     discoveredAgents = discovery.agents.filter((agent) => !denyPolicy.names.has(agent.name));
 
@@ -777,8 +790,19 @@ export default function (pi: ExtensionAPI) {
   });
 
   // Inject available agents into the system prompt.
-  pi.on("before_agent_start", async (event) => {
-    if (!canDelegate) return;
+  pi.on("before_agent_start", async (event, ctx) => {
+    if (!canDelegate || denyPolicy.error) return;
+    // Revalidate the selected owner so a changed file cannot leave a stale private catalog.
+    if (ownerContext !== undefined) {
+      try {
+        discoveredAgents = discoverEffectiveAgentsWithStarter(
+          ctx.cwd, shouldIncludeProjectAgents(ctx.cwd, ctx.isProjectTrusted()), ownerContext,
+        ).discovery.agents.filter((agent) => !denyPolicy.names.has(agent.name));
+      } catch (error) {
+        discoveredAgents = [];
+        return { systemPrompt: `${event.systemPrompt}\n\nSubagent delegation unavailable: ${String(error)}` };
+      }
+    }
     if (discoveredAgents.length === 0) return;
 
     return {
@@ -839,14 +863,27 @@ export default function (pi: ExtensionAPI) {
         const parentModel: ParentModel | undefined = ctx.model
           ? { provider: ctx.model.provider, id: ctx.model.id }
           : undefined;
-        const starterDiscovery = discoverAgentsWithStarter(
-          ctx.cwd,
-          shouldIncludeProjectAgents(ctx.cwd, ctx.isProjectTrusted()),
-        );
+        let starterDiscovery;
+        try {
+          starterDiscovery = discoverEffectiveAgentsWithStarter(
+            ctx.cwd,
+            shouldIncludeProjectAgents(ctx.cwd, ctx.isProjectTrusted()),
+            ownerContext,
+          );
+        } catch (error) {
+          return {
+            content: [{ type: "text", text: String(error) }],
+            details: makeDetailsFactory(null)([], true),
+          };
+        }
         const discovery = starterDiscovery.discovery;
         const agents = discovery.agents.filter((agent) => !denyPolicy.names.has(agent.name));
         const makeDetails = makeDetailsFactory(discovery.projectAgentsDir);
 
+        for (const call of calls) {
+          const selected = agents.find((agent) => agent.name === call.agent);
+          call.agentIdentity = selected ? agentIdentity(selected) : call.agent;
+        }
         const parentSessionId = ctx.sessionManager.getSessionId();
         attachSessionIdentities(calls, parentSessionId);
 
@@ -869,7 +906,7 @@ export default function (pi: ExtensionAPI) {
           };
         }
 
-        const requested = new Set(calls.map((call) => call.agent));
+        const requested = new Set(calls.map((call) => call.agentIdentity ?? call.agent));
 
         if (preventCycles) {
           const cycleViolations = getCycleViolations(

@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
-import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, getCurrentSystemPrompt, type AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const customType = "pi-subagent:delegation";
@@ -71,6 +71,9 @@ export default function (pi: ExtensionAPI) {
             entries: ctx.sessionManager.getEntries(),
             contextMessages: context.messages,
             tools: pi.getAllTools().map((tool) => tool.name),
+            systemPrompt: getCurrentSystemPrompt(context.messages),
+            ownerContext: process.env.PI_SUBAGENT_OWNER_CONTEXT ?? null,
+            stack: process.env.PI_SUBAGENT_STACK ?? "[]",
             depth: process.env.PI_SUBAGENT_DEPTH ?? "0",
             denyAgents: process.env.PI_SUBAGENT_DENY_AGENTS ?? null,
             temporaryParent: process.env.PI_SUBAGENT_TEMP_PARENT_SESSION ?? "0",

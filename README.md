@@ -24,6 +24,7 @@ There are many subagent extensions for Pi; this one is mine.
 - **Unified Delegation** — One extension handles one specialist call or many parallel calls.
 - **Named Persistent Sessions** — Continue specialist subagents across multiple turns when useful.
 - **Agent Session Guidance** — Agent definitions can advise when persistent or ephemeral calls fit best.
+- **Parent-Local Workers** — Define private direct workers inline, visible only when their owner is launched.
 - **Context Control** — Subagents start fresh by default; explicit parent snapshot cloning remains available for exceptional cases.
 - **Inactivity Watchdog** — Stop silent child runs while allowing active RPC streams to continue.
 - **Depth + Cycle Guards** — Prevent runaway recursive delegation.
@@ -169,6 +170,7 @@ You review code changes. Focus on substantive issues, cite files and lines, and 
 | `noTools` | No | `false` | Set to `true` to disable all built-in, extension, and custom tools for this agent. |
 | `sessionPreference` | No | — | Advisory machine-readable hint for the main agent. One of `ephemeral`, `persistent`, or `either`. |
 | `sessionHint` | No | — | Advisory free-form guidance shown to the main agent when choosing whether to pass `session`. |
+| `subagents` | No | — | Map of direct parent-local workers. See below for the inline schema. |
 
 Notes:
 
@@ -179,6 +181,76 @@ Notes:
 - `sessionHint` can be used by itself for free-form guidance; the extension does not infer `sessionPreference` from it.
 - The Markdown body becomes the agent's system prompt and is appended to Pi's default system prompt.
 - Agent files are read when the tool runs; continued named sessions use the current definition of the agent name.
+
+#### Parent-local inline workers
+
+An agent can own one direct tier of workers without installing separate agent files:
+
+```markdown
+---
+name: reviewer
+description: Review a concrete change.
+thinking: medium
+subagents:
+  review-analyst:
+    description: Investigate one bounded correctness question.
+    tools: read,grep,find,ls
+    thinking: medium
+    sessionPreference: ephemeral
+    systemPrompt: |
+      Investigate the assigned question and return evidence.
+      Do not implement fixes, delegate, or assess overall readiness.
+---
+
+Review the change. Delegate bounded investigations when useful, then assess the evidence yourself.
+```
+
+The Markdown body remains the owner's system prompt. Each map key is the worker's
+call name; it must be non-blank without surrounding whitespace. Each value must be
+a settings map with non-blank string `description` and `systemPrompt` fields.
+Optional fields are `model`, `thinking`, `tools`, `noTools`, `inactivityTimeout`,
+`sessionPreference`, and `sessionHint`, with the same defaults and precedence as
+ordinary agents. Workers do **not** implicitly copy all owner settings. For example,
+an omitted model uses the delegator's current model, while tools and startup thinking
+follow the existing CLI fallback rules. Set explicit worker settings when needed.
+
+Inline settings are validated rather than silently ignored: `model` and `sessionHint`
+must be non-blank strings; `thinking` must be `off`, `minimal`, `low`, `medium`, `high`,
+`xhigh`, or `max`; `noTools` must be boolean; `inactivityTimeout` must be an integer
+between 1 and 2,147,483; and `sessionPreference` must be `ephemeral`, `persistent`, or
+`either` (case-insensitive). `tools` accepts a comma-separated string or an array of
+non-blank strings; empty lists inherit the normal tool configuration. Unknown fields,
+including `name` and nested `subagents`, are rejected. An invalid inline definition
+causes the containing agent file to be skipped with a diagnostic. Existing top-level
+agents without `subagents` keep their previous parsing behavior.
+
+Only the exact selected owner sees these workers in its effective catalog. Local
+workers override same-named ordinary agents for that owner only. Root sessions and
+unrelated agents cannot resolve a private worker by its short name; if an ordinary
+global agent has that name, they still resolve the global one. An inline worker does
+not inherit its owner's private catalog. Each descendant launch clears that context
+or replaces it with the newly selected ordinary agent's own direct workers.
+
+The runner transports an absolute locator for the selected owner, including its
+name, user/project source, and content digest. It does not resolve the definition
+relative to the temporary prompt file or the child's cwd. Thus an owner selected
+from a trusted project remains the same owner even when launched in another cwd;
+this does not approve that other project's configuration. Missing, changed, or
+malformed launch context disables delegation rather than selecting a replacement.
+Relaunch the owner to use an edited definition. Normal named owner continuations
+load the current definition and transport a fresh locator.
+
+Local workers support both ephemeral calls and named continuation under the existing
+persisted-parent contract. Their session IDs, locks, and cycle identities include the
+owner's canonical file path and name, so equal short names under different owners
+remain separate. Moving or renaming an owner creates a different local session
+identity; editing its settings does not. Ordinary global session identities are
+unchanged. Depth, cycle, trust, and `PI_SUBAGENT_DENY_AGENTS` controls still apply;
+the deny list matches the worker's short call name, including continuations and batches.
+
+This is workflow-local visibility, **not confidentiality or an OS security boundary**.
+A shell-capable process can read agent files or bypass the launcher. A read-only tool
+allowlist reduces accidental edits and delegation; it is not a general access policy.
 
 #### Available Built-in Tools
 
