@@ -497,6 +497,24 @@ Process capture is separately bounded to prevent a long-running child from consu
 
 Full session metadata, including generated session ID, effective cwd, creation status, and applied initial context, is available in the tool result details and TUI expanded view.
 
+### Denying Agent Names
+
+Set `PI_SUBAGENT_DENY_AGENTS` to a JSON array of exact agent names when launching Pi:
+
+```bash
+PI_SUBAGENT_DENY_AGENTS='["coder-junior","coder-senior"]' pi
+```
+
+These names are illustrative; any agent name can be denied. Matching is case-sensitive, with no wildcard expansion or trimming of configured names. Values must be non-blank strings. Duplicate names are harmless. An unset variable or `[]` preserves unrestricted behavior.
+
+Denied names are omitted from the model-visible available-agent catalog and rejected by the `subagent` tool even if the caller already knows the name. Denial applies after user/project definition precedence, so a project override with the same name remains denied. A batch containing a denied call is rejected before any child starts or session locks are acquired. This also applies to named-session continuation; allowed agents and their continuations remain usable.
+
+The extension reads the policy when it loads. Invalid explicit values (including an empty string, malformed JSON, a non-array value, or entries that are not non-blank strings) report an error to stderr and, when available, the UI. No agent catalog is injected, and every `subagent` call fails without child or session setup. Pi itself can continue running. Correct the configuration and reload the extension, or relaunch Pi with a valid value.
+
+Every extension-launched child receives the effective policy, including fresh and continued named sessions, parent-seeded calls, and deeper descendants. The policy is independent of the depth and cycle guards below; disabling cycle prevention does not disable denial. Native Pi launches and resumes must receive the variable from their launcher, for example by applying the same environment assignment to `pi --resume`. Session files do not store authorization: resuming under a different launch environment uses that environment's policy. There is no agent-frontmatter or CLI counterpart for this setting.
+
+This is workflow control, **not an OS security sandbox**. A process with shell access can launch another process or alter its environment. The extension does not prevent that or impose irreversible authorization on saved sessions.
+
 ### Delegation Guards
 
 By default, this extension enforces two runtime guards:
