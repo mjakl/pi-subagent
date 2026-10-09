@@ -16,7 +16,7 @@ import {
   getPackageDir,
   truncateTail,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentConfig } from "./agents.js";
+import { type AgentConfig, OWNER_CONTEXT_ENV, agentIdentity } from "./agents.js";
 import { DELEGATION_ENV, type DelegationMetadata } from "./delegation-metadata.js";
 import {
   getInheritedProjectTrustArgs,
@@ -515,7 +515,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
     const exitCode = await new Promise<number>((resolve) => {
       const nextDepth = Math.max(0, Math.floor(parentDepth)) + 1;
       const propagatedMaxDepth = Math.max(0, Math.floor(maxDepth));
-      const propagatedStack = [...parentAgentStack, agentName];
+      const propagatedStack = [...parentAgentStack, agentIdentity(agent)];
       const { command, prefixArgs } = resolvePiSpawn();
       const proc = spawn(command, [...prefixArgs, ...piArgs], {
         cwd: callCwd ?? cwd,
@@ -524,6 +524,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
         stdio: ["pipe", "pipe", "pipe"],
         env: {
           ...process.env,
+          // Every launch replaces the caller's private catalog, including continuations.
+          [OWNER_CONTEXT_ENV]: agent.ownerContext ? JSON.stringify(agent.ownerContext) : undefined,
           PI_SUBAGENT_DENY_AGENTS: deniedAgentNames === undefined
             ? process.env.PI_SUBAGENT_DENY_AGENTS
             : JSON.stringify(deniedAgentNames),

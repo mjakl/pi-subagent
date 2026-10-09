@@ -11,6 +11,7 @@
  */
 
 import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -30,6 +31,31 @@ export interface AgentConfig {
 	systemPrompt: string;
 	source: "user" | "project";
 	filePath: string;
+	/** Direct workers are never included in ordinary discovery. */
+	subagents?: AgentConfig[];
+	ownerContext?: OwnerContext;
+	localOwner?: { name: string; filePath: string };
+}
+
+export const OWNER_CONTEXT_ENV = "PI_SUBAGENT_OWNER_CONTEXT";
+
+interface OwnerContext {
+	version: 1;
+	filePath: string;
+	name: string;
+	source: "user" | "project";
+	digest: string;
+}
+
+/** Keep global identities unchanged; local identities include the selected owner. */
+export function agentIdentity(agent: AgentConfig): string {
+	return agent.localOwner
+		? JSON.stringify(["pi-subagent/local/v1", agent.localOwner.filePath, agent.localOwner.name, agent.name])
+		: agent.name;
+}
+
+function contentDigest(content: string): string {
+	return createHash("sha256").update(content).digest("hex");
 }
 
 export interface AgentDiscoveryResult {
@@ -187,9 +213,9 @@ function findNearestProjectAgentsDir(cwd: string): string | null {
 }
 
 /** Parse a single agent markdown file into an AgentConfig. Returns null on skip. */
-function parseAgentFile(filePath: string, source: "user" | "project"): AgentConfig | null {
+function parseAgentFile(filePath: string, source: "user" | "project", selectedContent?: string): AgentConfig | null {
 	let content: string;
-	try { content = fs.readFileSync(filePath, "utf-8"); } catch { return null; }
+	try { content = selectedContent ?? fs.readFileSync(filePath, "utf-8"); } catch { return null; }
 
 	let parsed: { frontmatter: Record<string, unknown>; body: string };
 	try {
@@ -200,9 +226,21 @@ function parseAgentFile(filePath: string, source: "user" | "project"): AgentConf
 		return null;
 	}
 
-	const frontmatter = parsed.frontmatter ?? {};
-	const body = parsed.body ?? "";
+	try {
+		return parseAgentConfig(parsed.frontmatter ?? {}, parsed.body ?? "", source, filePath, content);
+	} catch (error) {
+		console.warn(`[pi-subagent] Skipping invalid agent file "${filePath}": ${String(error)}`);
+		return null;
+	}
+}
 
+function parseAgentConfig(
+	frontmatter: Record<string, unknown>,
+	body: string,
+	source: "user" | "project",
+	filePath: string,
+	content?: string,
+): AgentConfig | null {
 	const name = typeof frontmatter.name === "string" ? frontmatter.name.trim() : "";
 	const description = typeof frontmatter.description === "string" ? frontmatter.description.trim() : "";
 	if (!name || !description) return null;
@@ -233,6 +271,22 @@ function parseAgentFile(filePath: string, source: "user" | "project"): AgentConf
 		);
 	}
 
+	let subagents: AgentConfig[] | undefined;
+	let ownerContext: OwnerContext | undefined;
+	if (frontmatter.subagents !== undefined) {
+		if (!isRecord(frontmatter.subagents)) throw new Error("subagents must be a map of local worker names to settings.");
+		const ownerPath = fs.realpathSync(filePath);
+		subagents = Object.entries(frontmatter.subagents).map(([localName, settings]) => {
+			validateLocalSettings(localName, settings);
+			const local = parseAgentConfig(
+				{ ...settings, name: localName }, settings.systemPrompt as string, source, ownerPath,
+			)!;
+			local.localOwner = { name, filePath: ownerPath };
+			return local;
+		});
+		ownerContext = { version: 1, filePath: ownerPath, name, source, digest: contentDigest(content!) };
+	}
+
 	return {
 		name,
 		description,
@@ -246,7 +300,69 @@ function parseAgentFile(filePath: string, source: "user" | "project"): AgentConf
 		systemPrompt: body,
 		source,
 		filePath,
+		...(subagents ? { subagents, ownerContext } : {}),
 	};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateLocalSettings(name: string, value: unknown): asserts value is Record<string, unknown> {
+	const invalid = (message: string): never => { throw new Error(`subagents.${name}: ${message}`); };
+	if (!name.trim() || name !== name.trim()) invalid("name must be non-blank with no surrounding whitespace.");
+	if (!isRecord(value)) invalid("settings must be a map.");
+	const settings = value as Record<string, unknown>;
+	const fields = new Set(["description", "systemPrompt", "tools", "noTools", "model", "thinking", "inactivityTimeout", "sessionPreference", "sessionHint"]);
+	for (const field of Object.keys(settings)) {
+		if (!fields.has(field)) invalid(`unsupported field "${field}" (nested subagents are not supported).`);
+	}
+	for (const field of ["description", "systemPrompt"]) {
+		if (typeof settings[field] !== "string" || !(settings[field] as string).trim()) invalid(`${field} must be a non-blank string.`);
+	}
+	for (const field of ["model", "sessionHint"]) {
+		if (settings[field] !== undefined && (typeof settings[field] !== "string" || !(settings[field] as string).trim())) invalid(`${field} must be a non-blank string.`);
+	}
+	if (settings.noTools !== undefined && typeof settings.noTools !== "boolean") invalid("noTools must be a boolean.");
+	if (settings.tools !== undefined && typeof settings.tools !== "string" &&
+		!(Array.isArray(settings.tools) && settings.tools.every((tool) => typeof tool === "string" && tool.trim()))) invalid("tools must be a comma-separated string or an array of non-blank strings.");
+	if (settings.thinking !== undefined && !["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(settings.thinking as string)) invalid("invalid thinking level.");
+	if (settings.sessionPreference !== undefined &&
+		(typeof settings.sessionPreference !== "string" || !["ephemeral", "persistent", "either"].includes(settings.sessionPreference.trim().toLowerCase()))) invalid("invalid sessionPreference.");
+	if (settings.inactivityTimeout !== undefined &&
+		(typeof settings.inactivityTimeout !== "number" || !Number.isSafeInteger(settings.inactivityTimeout) || settings.inactivityTimeout < 1 || settings.inactivityTimeout > MAX_TIMER_SECONDS)) invalid(`inactivityTimeout must be an integer between 1 and ${MAX_TIMER_SECONDS}.`);
+}
+
+/** Resolve only the exact launch-selected owner, never a same-named replacement. */
+export function resolveOwnerSubagents(raw: string | undefined): AgentConfig[] {
+	if (raw === undefined) return [];
+	try {
+		const context: unknown = JSON.parse(raw);
+		if (!isRecord(context) || context.version !== 1 ||
+			typeof context.filePath !== "string" || !path.isAbsolute(context.filePath) ||
+			typeof context.name !== "string" || !context.name.trim() ||
+			(context.source !== "user" && context.source !== "project") ||
+			typeof context.digest !== "string" || !/^[a-f0-9]{64}$/.test(context.digest)) throw new Error("malformed launch locator.");
+		const content = fs.readFileSync(context.filePath, "utf8");
+		if (contentDigest(content) !== context.digest) throw new Error("selected owner file changed since launch.");
+		const owner = parseAgentFile(context.filePath, context.source, content);
+		if (!owner || owner.name !== context.name || !owner.subagents) throw new Error("selected owner is missing or invalid.");
+		return owner.subagents;
+	} catch (error) {
+		throw new Error(`Invalid ${OWNER_CONTEXT_ENV}: ${String(error)} Delegation is disabled; relaunch the owner from its current definition.`);
+	}
+}
+
+/** Shared effective catalog for prompt visibility and execution. */
+export function discoverEffectiveAgentsWithStarter(
+	cwd: string,
+	includeProjectAgents: boolean,
+	ownerContext: string | undefined,
+): StarterAgentDiscoveryResult {
+	const locals = resolveOwnerSubagents(ownerContext);
+	const result = discoverAgentsWithStarter(cwd, includeProjectAgents);
+	result.discovery.agents = mergeAgents(result.discovery.agents, locals);
+	return result;
 }
 
 /** Load all agent definitions from a directory. */

@@ -140,7 +140,8 @@ function oneLine(text: string): string {
 }
 
 export function formatAgentForPrompt(agent: AgentConfig): string {
-  const lines = [`- **${agent.name}** (${agent.source}): ${agent.description}`];
+  const origin = agent.localOwner ? `local to ${agent.localOwner.name}` : agent.source;
+  const lines = [`- **${agent.name}** (${origin}): ${agent.description}`];
   if (agent.inactivityTimeout) {
     lines.push(`  Inactivity timeout default: ${agent.inactivityTimeout}s (child RPC stdout inactivity).`);
   }
@@ -170,7 +171,7 @@ The following subagents are available via the \`subagent\` tool:
 
 ${agentList}
 
-Agent source labels are informational. Project agents come from this repository and can override user agents with the same name.
+Agent source labels are informational. Project agents come from this repository and can override user agents with the same name. Parent-local workers override ordinary agents only in their owner's catalog; they are not available to root sessions or other agents.
 
 ### How to call the subagent tool
 

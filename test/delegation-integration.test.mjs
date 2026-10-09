@@ -7,7 +7,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { ProjectTrustStore, SessionManager } from "@earendil-works/pi-coding-agent";
 import { resolveChildSessionDir } from "../session-paths.ts";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -300,7 +300,8 @@ test("real Pi persists only new named origins, bound to the child header and imm
   assert.equal(first.session.created, true);
   const beforeFirst = fixture.observation("first-child");
   assert.equal(first.session.id, beforeFirst.header.id);
-  assert.equal(beforeFirst.diskEntries.length, 0, "appendEntry remains buffered until a real assistant response");
+  // Pi 1.1 can flush real system/user entries before requesting its first response.
+  assert.equal(beforeFirst.diskEntries.some(entry => entry.type === "custom_message" || (entry.type === "message" && entry.message.role === "assistant")), false, "metadata does not fabricate a message to force persistence");
   assert.deepEqual(beforeFirst.entries.filter((entry) => entry.type === "message").map((entry) => entry.message.role), ["system", "user"]);
   assert.equal(beforeFirst.entries.some((entry) => entry.type === "custom_message"), false, "no placeholder custom messages");
   assert.equal(origins(beforeFirst.entries).length, 1, "child appended metadata before its first model response");
@@ -454,7 +455,7 @@ test("real Pi explicitly loads the metadata helper when child extension discover
   assert.equal(observation.tools.includes("subagent"), false, "main extension is absent in the child");
   assert.equal(child.session.id, observation.header.id);
   assertOrigin(jsonl(observation.file), parent.sessionId, "worker", "helper-only");
-  assert.equal(observation.diskEntries.length, 0, "helper does not force a placeholder flush");
+  assert.equal(observation.diskEntries.some(entry => entry.type === "custom_message" || (entry.type === "message" && entry.message.role === "assistant")), false, "helper does not fabricate a message to force persistence");
   await rpc.close();
   assert.equal(rpc.exit.code, 0, rpc.stderr);
 });
@@ -677,4 +678,207 @@ test("current parents share the corrected lock and release it after cancellation
   await second.close();
   assert.equal(first.exit.code, 0, first.stderr);
   assert.equal(second.exit.code, 0, second.stderr);
+});
+
+function writeLocalOwner(directory, name, marker) {
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, `${name}.md`), `---
+name: ${name}
+description: Owner ${marker}
+subagents:
+  analyst:
+    description: Private analyst ${marker}
+    systemPrompt: Private analyst instructions ${marker}.
+    thinking: medium
+    sessionPreference: persistent
+  secret:
+    description: Private secret ${marker}
+    systemPrompt: Private secret instructions ${marker}.
+---
+Owner instructions ${marker}.
+`);
+}
+
+function nestedTool(result) {
+  const tool = result.messages.findLast(message => message.role === "toolResult" && message.toolName === "subagent");
+  assert.ok(tool, "child executed the real production tool");
+  return tool;
+}
+
+function observedTool(fixture, tag) {
+  const observation = jsonl(fixture.log).findLast(record => record.kind === "request" && record.tag === tag && record.lastRole === "toolResult");
+  assert.ok(observation, `provider observed completed tool for ${tag}`);
+  return nestedTool({ messages: observation.entries.filter(entry => entry.type === "message").map(entry => entry.message) });
+}
+
+const localCall = (agent, tag, options = {}, plan = {}) => ({
+  agent, prompt: JSON.stringify({ tag, ...plan }), timeout: 25, inactivityTimeout: 20, ...options,
+});
+
+test("real owner launches pin private resolution across cwd, continuations, and descendant clearing", { timeout: 120_000 }, async t => {
+  const fixture = setup(t);
+  const userAgents = path.join(fixture.agentDir, "agents");
+  const projectAgents = path.join(fixture.cwd, ".pi", "agents");
+  writeLocalOwner(userAgents, "worker", "user");
+  writeLocalOwner(projectAgents, "worker", "selected-project");
+  fs.writeFileSync(path.join(userAgents, "analyst.md"), "---\nname: analyst\ndescription: Ordinary global analyst\n---\nGlobal analyst instructions.\n");
+  const target = path.join(fixture.dir, "target");
+  writeLocalOwner(path.join(target, ".pi", "agents"), "worker", "wrong-target");
+  const trust = new ProjectTrustStore(fixture.agentDir);
+  trust.set(fixture.cwd, true);
+  trust.set(target, false);
+  const rpc = fixture.start({ envOverrides: { PI_SUBAGENT_MAX_DEPTH: "4" } });
+  const rootSecret = await rpc.prompt({ tag: "root-private", calls: [localCall("secret", "unreachable-root")] });
+  assert.match(JSON.stringify(nestedTool({ messages: rootSecret.messages })), /Unknown agent.*secret/);
+  assert.doesNotMatch(fixture.observation("root-private").systemPrompt, /\*\*secret\*\*/);
+
+  const [owner] = results(await rpc.prompt({ tag: "owner-root", calls: [localCall("worker", "owner-first", { cwd: target, session: "owner" }, { calls: [
+    localCall("analyst", "private-a", { session: "a", initialContext: "parent" }, { calls: [localCall("secret", "unreachable-analyst")] }),
+    localCall("analyst", "private-b", { session: "b" }, { calls: [localCall("analyst", "global-grandchild")] }),
+    localCall("secret", "private-secret", { initialContext: "parent" }),
+    localCall("leaf", "unrelated-child", { session: "leaf" }, { calls: [localCall("secret", "unreachable-leaf")] }),
+  ] })] }));
+  const observation = fixture.observation("owner-first");
+  assert.match(observation.systemPrompt, /Owner instructions selected-project/);
+  assert.match(observation.systemPrompt, /\*\*analyst\*\* \(local to worker\): Private analyst selected-project/);
+  assert.doesNotMatch(observation.systemPrompt, /wrong-target|Ordinary global analyst/);
+  assert.equal(JSON.parse(observation.ownerContext).filePath, fs.realpathSync(path.join(projectAgents, "worker.md")));
+  const nested = observedTool(fixture, "owner-first");
+  assert.notEqual(nested.details.failed, true);
+  const [a, b, secret, leaf] = nested.details.results;
+  assert.notEqual(a.session.id, b.session.id, "independent parallel local sessions");
+  assert.equal(a.session.initialContextApplied, "parent", "named locals support real parent snapshot creation");
+  assert.equal(fixture.observation("private-secret").temporaryParent, "1", "ephemeral locals support real parent snapshots");
+  for (const tag of ["private-a", "private-b", "private-secret"]) {
+    const local = fixture.observation(tag);
+    assert.equal(local.ownerContext, null, "inline workers cannot inherit their owner's catalog");
+    assert.match(local.systemPrompt, /Private (analyst|secret) instructions selected-project/);
+    assert.doesNotMatch(local.systemPrompt, /\*\*secret\*\*/);
+    assert.match(JSON.parse(local.stack).at(-1), /pi-subagent\/local\/v1/);
+  }
+  assert.match(JSON.stringify(observedTool(fixture, "private-a")), /Unknown agent.*secret/);
+  assert.match(JSON.stringify(observedTool(fixture, "unrelated-child")), /Unknown agent.*secret/);
+  assert.equal(fixture.observation("unrelated-child").ownerContext, null);
+  assert.equal(observedTool(fixture, "private-b").details.results[0].exitCode, 0, "a same-named global is not a local cycle");
+  assert.match(fixture.observation("global-grandchild").systemPrompt, /Global analyst instructions/);
+  assert.equal(JSON.parse(fixture.observation("global-grandchild").stack).at(-1), "analyst");
+  assert.equal(secret.exitCode, 0);
+
+  const [resumed] = results(await rpc.prompt({ tag: "resume-root", calls: [localCall("worker", "owner-resumed", { cwd: target, session: "owner", initialContext: "parent" }, { calls: [
+    localCall("analyst", "private-resumed", { session: "a", initialContext: "parent" }),
+    localCall("leaf", "leaf-resumed", { session: "leaf" }, { calls: [localCall("secret", "still-unreachable")] }),
+  ] })] }));
+  assert.equal(resumed.session.id, owner.session.id);
+  assert.equal(resumed.session.created, false);
+  const resumedChildren = observedTool(fixture, "owner-resumed").details.results;
+  assert.equal(resumedChildren[0].session.id, a.session.id);
+  assert.equal(resumedChildren[0].session.created, false);
+  assert.equal(fixture.observation("private-resumed").ownerContext, null);
+  assert.equal(fixture.observation("leaf-resumed").ownerContext, null);
+  assert.match(JSON.stringify(observedTool(fixture, "leaf-resumed")), /Unknown agent.*secret/);
+
+  const [duplicate] = results(await rpc.prompt({ tag: "duplicate-root", calls: [localCall("worker", "duplicate-owner", { cwd: target, session: "owner" }, { calls: [
+    localCall("analyst", "must-not-start-one", { session: "same" }),
+    localCall("analyst", "must-not-start-two", { session: "same" }),
+  ] })] }));
+  assert.match(JSON.stringify(observedTool(fixture, "duplicate-owner")), /same persistent session/);
+  const rootGlobal = results(await rpc.prompt({ tag: "global-root", calls: [localCall("analyst", "ordinary-global")] }));
+  assert.equal(rootGlobal[0].exitCode, 0);
+  assert.match(fixture.observation("ordinary-global").systemPrompt, /Global analyst instructions/);
+  assert.equal(fixture.observation("ordinary-global").ownerContext, null);
+});
+
+test("real local identities isolate equal owner names and preserve denial, cycles, and depth", { timeout: 120_000 }, async t => {
+  const fixture = setup(t);
+  const agents = path.join(fixture.agentDir, "agents");
+  writeLocalOwner(agents, "worker", "first");
+  writeLocalOwner(agents, "lead", "second");
+  const rpc = fixture.start({ envOverrides: { PI_SUBAGENT_MAX_DEPTH: "4" } });
+  const own = (name, tag, workerTag) => localCall(name, tag, { session: name }, { calls: [localCall("analyst", workerTag, { session: "shared" })] });
+  const owners = results(await rpc.prompt({ tag: "two-owners", calls: [own("worker", "first-owner", "first-local"), own("lead", "second-owner", "second-local")] }));
+  const locals = ["first-owner", "second-owner"].map(tag => observedTool(fixture, tag).details.results[0]);
+  assert.notEqual(locals[0].session.id, locals[1].session.id);
+  const identities = ["first-local", "second-local"].map(tag => JSON.parse(fixture.observation(tag).stack).at(-1));
+  assert.notEqual(identities[0], identities[1]);
+  assert.notEqual(identities[0], "analyst");
+
+  results(await rpc.prompt({ tag: "replacement-root", calls: [localCall("worker", "replacement-first", { session: "worker" }, { calls: [
+    localCall("lead", "replacement-second", { session: "lead" }, { calls: [localCall("analyst", "replacement-local", { session: "shared" })] }),
+  ] })] }));
+  assert.equal(JSON.parse(fixture.observation("replacement-second").ownerContext).name, "lead", "a global descendant replaces, rather than inherits, the private owner");
+  assert.match(fixture.observation("replacement-second").systemPrompt, /Private analyst second/);
+  assert.doesNotMatch(fixture.observation("replacement-second").systemPrompt, /Private analyst first/);
+  assert.match(fixture.observation("replacement-local").systemPrompt, /Private analyst instructions second/);
+  assert.equal(fixture.observation("replacement-local").ownerContext, null);
+
+  const ownerContext = fixture.observation("first-owner").ownerContext;
+  // Equal delegator ID, cwd, and handle prove that owner identity participates in the session key.
+  const sameIdFirst = fixture.start({ rootId: "same-parent", envOverrides: { PI_SUBAGENT_OWNER_CONTEXT: ownerContext } });
+  const sameIdSecond = fixture.start({ rootId: "same-parent", storage: path.join(fixture.dir, "other-sessions"), envOverrides: { PI_SUBAGENT_OWNER_CONTEXT: fixture.observation("second-owner").ownerContext } });
+  const [[one], [two]] = await Promise.all([
+    sameIdFirst.prompt({ tag: "same-id-first", calls: [localCall("analyst", "isolated-first", { session: "shared" })] }).then(results),
+    sameIdSecond.prompt({ tag: "same-id-second", calls: [localCall("analyst", "isolated-second", { session: "shared" })] }).then(results),
+  ]);
+  assert.notEqual(one.session.id, two.session.id);
+
+  const localFile = fixture.observation("isolated-first").file;
+  const beforeDenial = fs.readFileSync(localFile, "utf8");
+  await sameIdFirst.close();
+  const denied = fixture.start({ rootId: "same-parent", envOverrides: { PI_SUBAGENT_OWNER_CONTEXT: ownerContext, PI_SUBAGENT_DENY_AGENTS: '["analyst"]' } });
+  const denyResult = await denied.prompt({ tag: "deny-private", calls: [localCall("analyst", "denied-local", { session: "shared" }), localCall("leaf", "denied-batch-peer")] });
+  assert.match(JSON.stringify(nestedTool({ messages: denyResult.messages })), /Blocked by PI_SUBAGENT_DENY_AGENTS/);
+  assert.equal(fs.readFileSync(localFile, "utf8"), beforeDenial, "denial prevents continuing the existing local session");
+  assert.doesNotMatch(fixture.observation("deny-private").systemPrompt, /\*\*analyst\*\*/);
+
+  const cyclic = fixture.start({ rootId: "cyclic-root", envOverrides: { PI_SUBAGENT_OWNER_CONTEXT: ownerContext, PI_SUBAGENT_STACK: JSON.stringify([identities[0]]) } });
+  const cycle = await cyclic.prompt({ tag: "local-cycle", calls: [localCall("analyst", "cyclic-local")] });
+  assert.match(JSON.stringify(nestedTool({ messages: cycle.messages })), /delegation cycle detected/);
+
+  const shallow = fixture.start({ rootId: "shallow-root", envOverrides: { PI_SUBAGENT_MAX_DEPTH: "2" } });
+  results(await shallow.prompt({ tag: "depth-root", calls: [own("worker", "depth-owner", "depth-local")] }));
+  assert.equal(fixture.observation("depth-local").tools.includes("subagent"), false);
+  assert.doesNotMatch(fixture.observation("depth-local").systemPrompt, /## Available Subagents/);
+
+  for (const [tag, context] of [["malformed", "{}"], ["changed", ownerContext]]) {
+    if (tag === "changed") fs.appendFileSync(path.join(agents, "worker.md"), "Changed since launch.\n");
+    const invalid = fixture.start({ rootId: `invalid-${tag}-root`, envOverrides: { PI_SUBAGENT_OWNER_CONTEXT: context } });
+    const event = await invalid.prompt({ tag: `invalid-${tag}`, calls: [localCall("analyst", `unreachable-${tag}`, { session: "shared" })] });
+    const tool = nestedTool({ messages: event.messages });
+    assert.equal(tool.details.failed, true);
+    assert.deepEqual(tool.details.results, []);
+    assert.match(JSON.stringify(tool), /Invalid PI_SUBAGENT_OWNER_CONTEXT/);
+    assert.doesNotMatch(fixture.observation(`invalid-${tag}`).systemPrompt, /\*\*analyst\*\*/);
+  }
+});
+
+test("parallel parent processes conflict only on the same owner-qualified local session", { timeout: 60_000 }, async t => {
+  const fixture = setup(t);
+  writeLocalOwner(path.join(fixture.agentDir, "agents"), "worker", "lock-owner");
+  const setupClient = fixture.start();
+  results(await setupClient.prompt({ tag: "local-lock-setup", calls: [localCall("worker", "local-lock-owner")] }));
+  const ownerContext = fixture.observation("local-lock-owner").ownerContext;
+  const secondCwd = path.join(fixture.dir, "second");
+  const target = path.join(fixture.dir, "target");
+  fs.mkdirSync(secondCwd);
+  fs.mkdirSync(path.join(target, ".pi"), { recursive: true });
+  fs.writeFileSync(path.join(target, ".pi", "settings.json"), JSON.stringify({ sessionDir: "local-storage" }));
+  const first = fixture.start({ rootId: "local-lock-parent", storage: null, envOverrides: { PI_SUBAGENT_OWNER_CONTEXT: ownerContext } });
+  const second = fixture.start({ rootId: "local-lock-parent", launchCwd: secondCwd, storage: null, envOverrides: { PI_SUBAGENT_OWNER_CONTEXT: ownerContext } });
+  const from = first.events.length;
+  await first.command("prompt", { message: JSON.stringify({ tag: "local-lock-first", calls: [localCall("analyst", "slow-local", { cwd: target, session: "shared" }, { delayMs: 30_000 })] }) });
+  const settled = first.wait(event => event.type === "agent_settled", from);
+  settled.catch(() => {});
+  const deadline = Date.now() + 15_000;
+  while (!jsonl(fixture.log).some(record => record.kind === "request" && record.tag === "slow-local")) {
+    assert.ok(Date.now() < deadline, "local child reaches the provider while holding its lock");
+    await delay(25);
+  }
+  const before = jsonl(fixture.log).filter(record => record.kind === "process").length;
+  const conflict = await second.prompt({ tag: "local-lock-second", calls: [localCall("analyst", "must-not-run-local", { cwd: target, session: "shared" })] });
+  assert.match(JSON.stringify(nestedTool({ messages: conflict.messages })), /already running/);
+  assert.equal(jsonl(fixture.log).filter(record => record.kind === "process").length, before);
+  results(await second.prompt({ tag: "local-independent", calls: [localCall("analyst", "independent-local", { cwd: target, session: "independent" })] }));
+  await first.command("abort");
+  await settled;
+  assert.deepEqual(fs.readdirSync(path.join(target, "local-storage", ".pi-subagent-locks")), []);
 });
