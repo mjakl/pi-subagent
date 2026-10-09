@@ -325,6 +325,8 @@ export interface RunAgentOptions {
   maxDepth: number;
   /** Whether cycle prevention should be enforced in child processes. */
   preventCycles: boolean;
+  /** Effective deny policy captured by the extension, including on continuations. */
+  deniedAgentNames?: string[];
   /** Optional per-call inactivity timeout. Overrides the agent default. */
   inactivityTimeoutMs?: number;
   /** Optional exceptional wall-clock deadline for the child run. */
@@ -374,6 +376,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
     parentAgentStack,
     maxDepth,
     preventCycles,
+    deniedAgentNames,
     inactivityTimeoutMs: callInactivityTimeoutMs,
     timeoutMs,
     signal,
@@ -521,6 +524,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<SingleResult> {
         stdio: ["pipe", "pipe", "pipe"],
         env: {
           ...process.env,
+          PI_SUBAGENT_DENY_AGENTS: deniedAgentNames === undefined
+            ? process.env.PI_SUBAGENT_DENY_AGENTS
+            : JSON.stringify(deniedAgentNames),
           // Never inherit the caller's origin, including for temporary snapshots
           // that retain the caller's header ID. Continuations are not backfilled.
           [DELEGATION_ENV]: delegation ? JSON.stringify(delegation) : undefined,

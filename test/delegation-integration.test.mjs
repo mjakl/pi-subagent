@@ -189,7 +189,7 @@ function setup(t, { workerThinking } = {}) {
   return {
     dir, cwd, agentDir, sessionDir, tmp, log,
     start({ rootOnly = false, rootId = "delegation-test-root", launchPayload, thinking, model = "deterministic", cli = false,
-      launchCwd = cwd, storage = sessionDir, envOverrides = {},
+      launchCwd = cwd, storage = sessionDir, envOverrides = {}, resumeFile,
     } = {}) {
       const launchEnv = { ...env, ...envOverrides };
       if (launchPayload) launchEnv.PI_SUBAGENT_DELEGATION = JSON.stringify(launchPayload);
@@ -201,7 +201,7 @@ function setup(t, { workerThinking } = {}) {
         ...(rootOnly ? [] : ["--extension", helper]),
         "--provider", "delegation-test", "--model", model,
         ...(thinking ? ["--thinking", thinking] : []),
-        "--session-id", rootId, ...(storage === null ? [] : ["--session-dir", storage]),
+        ...(resumeFile ? ["--session", resumeFile] : ["--session-id", rootId]), ...(storage === null ? [] : ["--session-dir", storage]),
       ], cli);
       clients.push(client);
       return client;
@@ -213,6 +213,71 @@ function setup(t, { workerThinking } = {}) {
     },
   };
 }
+
+test("real Pi enforces denial before batch setup and inherits it through resumed children and descendants", { timeout: 120_000 }, async (t) => {
+  const fixture = setup(t);
+  fs.writeFileSync(path.join(fixture.agentDir, "agents", "helper.md"), "---\nname: helper\ndescription: Allowed helper\n---\nUse the deterministic test provider.\n");
+  const initial = fixture.start({ envOverrides: { PI_SUBAGENT_DENY_AGENTS: "[]" } });
+  const parent = await initial.command("get_state");
+  const [worker, leaf] = results(await initial.prompt({ tag: "unrestricted", calls: [
+    childCall("initial-worker", { session: "worker-session" }),
+    childCall("initial-leaf", { agent: "leaf", session: "leaf-session" }),
+  ] }));
+  assert.equal(fixture.observation("initial-leaf").denyAgents, "[]");
+  const leafFile = fixture.observation("initial-leaf").file;
+  const leafBefore = fs.readFileSync(leafFile, "utf8");
+  await initial.close();
+
+  const deny = '["leaf"]';
+  const rpc = fixture.start({ resumeFile: parent.sessionFile, envOverrides: {
+    PI_SUBAGENT_DENY_AGENTS: deny, PI_SUBAGENT_MAX_DEPTH: "4", PI_SUBAGENT_PREVENT_CYCLES: "false",
+  } });
+  assert.equal((await rpc.command("get_state")).sessionId, parent.sessionId);
+  const toolResult = (event) => event.messages.findLast(message => message.role === "toolResult" && message.toolName === "subagent");
+  for (const [tag, calls] of [
+    ["mixed-denied", [childCall("must-not-start", { agent: "helper", session: "fresh" }), childCall("denied", { agent: "leaf" })]],
+    ["denied-continuation", [childCall("must-not-resume", { agent: "leaf", session: "leaf-session", initialContext: "parent" })]],
+  ]) {
+    const processesBefore = jsonl(fixture.log).filter(record => record.kind === "process").length;
+    const sessionsBefore = fs.readdirSync(fixture.sessionDir).sort();
+    const locksBefore = fs.readdirSync(path.join(fixture.sessionDir, ".pi-subagent-locks")).sort();
+    const rejected = toolResult(await rpc.prompt({ tag, calls }));
+    assert.equal(rejected.isError, true);
+    assert.equal(rejected.details.failed, true);
+    assert.deepEqual(rejected.details.results, []);
+    assert.match(JSON.stringify(rejected), /Blocked by PI_SUBAGENT_DENY_AGENTS/);
+    assert.equal(jsonl(fixture.log).filter(record => record.kind === "process").length, processesBefore, "entire batch starts no children");
+    assert.deepEqual(fs.readdirSync(fixture.sessionDir).sort(), sessionsBefore, "no new sessions or lock roots");
+    assert.deepEqual(fs.readdirSync(path.join(fixture.sessionDir, ".pi-subagent-locks")).sort(), locksBefore, "no lock artifacts");
+    assert.equal(fs.readFileSync(leafFile, "utf8"), leafBefore, "denied continuation leaves persisted history unchanged");
+  }
+
+  for (const tag of ["allowed-first", "allowed-continue"]) {
+    const helperPlan = { tag: `${tag}-helper`, calls: [childCall(`${tag}-denied`, { agent: "leaf", session: "leaf-session" })] };
+    const workerPlan = { tag: `${tag}-worker`, calls: [childCall("unused", { agent: "helper", session: "helper-session", prompt: JSON.stringify(helperPlan) })] };
+    const [continued] = results(await rpc.prompt({ tag, calls: [childCall("unused", {
+      session: "worker-session", prompt: JSON.stringify(workerPlan),
+    })] }));
+    assert.equal(continued.session.id, worker.session.id);
+    assert.equal(continued.session.created, false, "allowed worker continuation stays usable");
+    const workerObservation = fixture.observation(`${tag}-worker`);
+    const helperObservation = fixture.observation(`${tag}-helper`);
+    assert.equal(workerObservation.denyAgents, deny);
+    assert.equal(helperObservation.denyAgents, deny, "deeper child inherits policy");
+    assert.equal(helperObservation.depth, "2");
+    assert.equal(helperObservation.tools.includes("subagent"), true, "denial does not disable allowed delegation");
+    const helperResult = results({ messages: jsonl(workerObservation.file).filter(entry => entry.type === "message").map(entry => entry.message) })[0];
+    assert.equal(helperResult.session.created, tag === "allowed-first", "allowed helper starts fresh, then continues");
+    const nestedRejection = toolResult({ messages: jsonl(helperObservation.file).filter(entry => entry.type === "message").map(entry => entry.message) });
+    assert.equal(nestedRejection.isError, true);
+    assert.match(JSON.stringify(nestedRejection), /Blocked by PI_SUBAGENT_DENY_AGENTS/);
+    assert.equal(jsonl(fixture.log).some(record => record.tag === `${tag}-denied`), false, "denied descendant never runs");
+  }
+  assert.equal(fs.readFileSync(leafFile, "utf8"), leafBefore);
+  assert.ok(leaf.session.id);
+  await rpc.close();
+  assert.equal(rpc.exit.code, 0, rpc.stderr);
+});
 
 test("real Pi persists only new named origins, bound to the child header and immediate parent", { timeout: 150_000 }, async (t) => {
   const fixture = setup(t);

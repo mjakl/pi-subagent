@@ -901,6 +901,48 @@ test("runAgent does not treat an accepted streaming prompt as handled", () => {
   }
 });
 
+test("runAgent propagates the effective deny policy in every launch mode, not the ambient value", () => {
+  const { moduleUrl, harnessPath, runJson, cleanup } = createRunnerProcessHarness("deny-env");
+  fs.writeFileSync(harnessPath, `
+    if (process.argv.includes("--mode")) {
+      const message = { role: "assistant", content: [{ type: "text", text: process.env.PI_SUBAGENT_DENY_AGENTS }], stopReason: "stop", timestamp: 1 };
+      for (const event of [{ type: "message_end", message }, { type: "agent_end", messages: [message] }, { type: "agent_settled" }]) {
+        process.stdout.write(JSON.stringify(event) + "\\n");
+      }
+    } else {
+      process.env.PI_SUBAGENT_DENY_AGENTS = "[]";
+      const { runAgent } = await import(${JSON.stringify(moduleUrl)});
+      const results = [];
+      for (const mode of ["ephemeral", "parent-seeded", "fresh", "continued"]) {
+        const session = mode === "fresh" || mode === "continued" ? {
+          id: "subagent.deny-env", handle: "helper", name: "helper", cwd: process.cwd(),
+          created: mode === "fresh", initialContextApplied: mode === "fresh" ? "empty" : null,
+        } : undefined;
+        results.push(await runAgent({
+          cwd: process.cwd(), agents: [{ name: "helper", description: "allowed", source: "user", systemPrompt: "" }],
+          callIndex: 0, agentName: "helper", prompt: "hello", parentSessionId: "parent",
+          initialContext: mode === "parent-seeded" ? "parent" : "empty",
+          parentSessionSnapshotJsonl: JSON.stringify({ type: "session", version: 3, id: "parent", cwd: process.cwd() }) + "\\n",
+          session, parentDepth: 1, parentAgentStack: ["worker"], maxDepth: 4, preventCycles: false,
+          deniedAgentNames: ["blocked", "another"],
+          makeDetails: (results) => ({ kind: "pi-subagent", projectAgentsDir: null, results }),
+        }));
+      }
+      process.stdout.write(JSON.stringify(results));
+    }
+  `);
+  try {
+    const results = runJson();
+    assert.equal(results.length, 4);
+    for (const result of results) {
+      assert.equal(result.exitCode, 0, JSON.stringify(result));
+      assert.equal(result.messages.at(-1).content[0].text, '["blocked","another"]');
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test("runAgent terminates a silent child after its inactivity timeout", () => {
   const { moduleUrl, harnessPath, runJson, cleanup } = createRunnerProcessHarness("inactivity");
 

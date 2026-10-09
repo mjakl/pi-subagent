@@ -48,6 +48,27 @@ export const STARTER_AGENT_FILE_NAME = "explore.md";
 
 export const MAX_TIMER_SECONDS = Math.floor(2_147_483_647 / 1000);
 
+export function parseDeniedAgentNames(raw: string | undefined): {
+	names: Set<string>;
+	error?: string;
+} {
+	if (raw === undefined) return { names: new Set() };
+	try {
+		const parsed: unknown = JSON.parse(raw);
+		if (Array.isArray(parsed) && parsed.every(
+			(name) => typeof name === "string" && name.trim().length > 0,
+		)) {
+			return { names: new Set(parsed) };
+		}
+	} catch {
+		// Explicit malformed configuration must not fall back to unrestricted delegation.
+	}
+	return {
+		names: new Set(),
+		error: "Invalid PI_SUBAGENT_DENY_AGENTS: expected a JSON array of non-blank agent-name strings. Subagent delegation is disabled until the configuration is corrected and the extension is reloaded.",
+	};
+}
+
 const STARTER_AGENT_MARKDOWN = `---
 name: explore
 description: Read-only codebase exploration specialist for focused searches, repository reconnaissance, and evidence-backed summaries. Use when you need fast context from files without edits.

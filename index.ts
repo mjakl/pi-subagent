@@ -22,6 +22,7 @@ import {
   MAX_TIMER_SECONDS,
   STARTER_AGENT_NAME,
   discoverAgentsWithStarter,
+  parseDeniedAgentNames,
 } from "./agents.js";
 import {
   CALLS_SCHEMA_DESCRIPTION,
@@ -712,6 +713,9 @@ export default function (pi: ExtensionAPI) {
     type: "boolean",
   });
 
+  const denyPolicy = parseDeniedAgentNames(process.env.PI_SUBAGENT_DENY_AGENTS);
+  if (denyPolicy.error) console.error(`[pi-subagent] ${denyPolicy.error}`);
+
   const depthConfig = resolveDelegationDepthConfig(pi);
   const { currentDepth, maxDepth, canDelegate, ancestorAgentStack, preventCycles } =
     depthConfig;
@@ -744,6 +748,10 @@ export default function (pi: ExtensionAPI) {
 
   // Auto-discover agents on session start.
   pi.on("session_start", async (_event, ctx) => {
+    if (denyPolicy.error) {
+      if (ctx.hasUI) ctx.ui.notify(denyPolicy.error, "error");
+      return;
+    }
     if (!canDelegate) return;
 
     const starterDiscovery = discoverAgentsWithStarter(
@@ -751,7 +759,7 @@ export default function (pi: ExtensionAPI) {
       shouldIncludeProjectAgents(ctx.cwd, ctx.isProjectTrusted()),
     );
     const discovery = starterDiscovery.discovery;
-    discoveredAgents = discovery.agents;
+    discoveredAgents = discovery.agents.filter((agent) => !denyPolicy.names.has(agent.name));
 
     if (ctx.hasUI) {
       if (starterDiscovery.createdAgentPath) {
@@ -802,6 +810,32 @@ export default function (pi: ExtensionAPI) {
       parameters: SubagentParams,
 
       async execute(_toolCallId, params, signal, onUpdate, ctx) {
+        if (denyPolicy.error) {
+          return {
+            content: [{ type: "text", text: denyPolicy.error }],
+            details: makeDetailsFactory(null)([], true),
+          };
+        }
+
+        const normalized = normalizeCalls(params.calls, ctx.cwd);
+        if (normalized.error || !normalized.calls) {
+          return {
+            content: [{ type: "text", text: normalized.error ?? "Invalid subagent parameters." }],
+            details: makeDetailsFactory(null)([], true),
+          };
+        }
+        const calls = normalized.calls;
+        const deniedCalls = calls.filter((call) => denyPolicy.names.has(call.agent));
+        if (deniedCalls.length > 0) {
+          const denied = deniedCalls
+            .map((call) => `calls[${call.index}].agent=${JSON.stringify(call.agent)}`)
+            .join(", ");
+          return {
+            content: [{ type: "text", text: `Blocked by PI_SUBAGENT_DENY_AGENTS: ${denied}. No calls were started.` }],
+            details: makeDetailsFactory(null)([], true),
+          };
+        }
+
         const parentModel: ParentModel | undefined = ctx.model
           ? { provider: ctx.model.provider, id: ctx.model.id }
           : undefined;
@@ -810,17 +844,8 @@ export default function (pi: ExtensionAPI) {
           shouldIncludeProjectAgents(ctx.cwd, ctx.isProjectTrusted()),
         );
         const discovery = starterDiscovery.discovery;
-        const { agents } = discovery;
+        const agents = discovery.agents.filter((agent) => !denyPolicy.names.has(agent.name));
         const makeDetails = makeDetailsFactory(discovery.projectAgentsDir);
-
-        const normalized = normalizeCalls(params.calls, ctx.cwd);
-        if (normalized.error || !normalized.calls) {
-          return {
-            content: [{ type: "text", text: normalized.error ?? "Invalid subagent parameters." }],
-            details: makeDetails([], true),
-          };
-        }
-        const calls = normalized.calls;
 
         const parentSessionId = ctx.sessionManager.getSessionId();
         attachSessionIdentities(calls, parentSessionId);
@@ -1030,6 +1055,7 @@ This guard prevents self-recursion and cyclic handoffs (for example A -> B -> A)
               parentAgentStack: ancestorAgentStack,
               maxDepth,
               preventCycles,
+              deniedAgentNames: Array.from(denyPolicy.names),
               inactivityTimeoutMs: call.inactivityTimeoutMs,
               timeoutMs: call.timeoutMs,
               signal,

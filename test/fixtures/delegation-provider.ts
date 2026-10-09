@@ -72,6 +72,7 @@ export default function (pi: ExtensionAPI) {
             contextMessages: context.messages,
             tools: pi.getAllTools().map((tool) => tool.name),
             depth: process.env.PI_SUBAGENT_DEPTH ?? "0",
+            denyAgents: process.env.PI_SUBAGENT_DENY_AGENTS ?? null,
             temporaryParent: process.env.PI_SUBAGENT_TEMP_PARENT_SESSION ?? "0",
             launchPayload: process.env.PI_SUBAGENT_DELEGATION ?? null,
           });
