@@ -1,59 +1,53 @@
-# AGENTS.md
+# Project guidance
 
-Simple guidance for coding agents working in this repository.
+`@mjakl/pi-subagent` is a Pi extension with entry point `index.ts`.
 
-## Repository setup
+## Setup and validation
 
-- Requirements: Node.js + npm
-- Install dependencies:
+Use Node.js and npm. Install dependencies with `npm install`.
 
-```bash
-npm install
-```
+For code changes, run the automated checks appropriate to the changed behavior:
 
-- Check what would be published:
+- `npm test` — Node.js test suite in `test/`.
+- `npm run check` — TypeScript checking without emitting files.
+
+For documentation-only changes, verify referenced commands and paths and inspect
+the diff for accuracy; runtime checks are not required unless behavior is affected.
+
+Use `pi -e .` for a targeted manual check of the local extension when needed, not
+as a replacement for automated checks.
+
+When changing package contents or publishing configuration, inspect both dry runs:
 
 ```bash
 npm pack --dry-run
 npm publish --dry-run --access public
 ```
 
-## Local validation
+## Navigation
 
-- This package is a Pi extension (entry point: `index.ts`).
-- Quick manual check with local package:
+- `index.ts` — extension entry point and tool registration.
+- `agents.ts` — agent discovery and parsing.
+- `contract.ts` — parent-facing tool contract text and prompt rendering.
+- `runner.ts` — subagent process execution; `runner-cli.js` and `runner-events.js`
+  handle CLI inheritance and RPC events.
+- `session-lock.ts`, `session-paths.ts` — named-session locking and storage paths.
+- `delegation-metadata.ts` — persisted cross-process delegation metadata.
+- `output.ts` — result summaries, truncation, and full-output saving.
+- `render.ts` — TUI rendering for tool calls and results.
+- `types.ts` — shared types and result helpers.
+- `test/` — automated tests.
 
-```bash
-pi -e .
-```
+Before changing the tool API or runtime/session behavior, read the relevant
+[README technical reference](README.md#technical-reference) and corresponding
+implementation and tests.
 
-## Code map
+## Commits and releases
 
-- `index.ts` — extension entry point and tool registration
-- `agents.ts` — agent discovery/parsing
-- `contract.ts` — parent-facing tool contract text and prompt rendering
-- `runner.ts` — subagent process execution
-- `render.ts` — TUI rendering for tool calls/results
-- `types.ts` — shared types/helpers
-- `README.md` — user-facing docs
+Use focused commits with imperative, sentence-case messages and no `feat:`,
+`fix:`, or `chore:` prefix.
 
-## Commit format (important)
-
-Use the repository's existing style:
-
-- Imperative mood
-- Sentence case
-- No prefix like `feat:` / `fix:` / `chore:`
-
-Examples:
-
-- `Add depth-limited subagent delegation`
-- `Scope npm package name`
-- `Add npm install option to README`
-
-Keep commits focused (one logical change per commit).
-
-## Release notes
-
-- Package name: `@mjakl/pi-subagent`
-- For doc/code changes on npm, publish a new version (`npm version patch|minor|major`), then publish.
+Only version or publish the package for an explicitly authorized release, not
+as part of an ordinary code or documentation task. For an authorized release,
+bump the version with `npm version patch`, `npm version minor`, or
+`npm version major` as appropriate, then publish with `npm publish --access public`.
