@@ -1,9 +1,8 @@
 /**
  * Parent-facing subagent tool contract.
  *
- * This module owns the wording taught to the parent agent through the tool
- * schema, tool description, and injected system prompt. Keep API semantics here
- * so those surfaces do not drift independently.
+ * This module owns the static API contract in the tool schema and description,
+ * and the dynamic agent catalog and guards in the injected system prompt.
  */
 
 import type { AgentConfig } from "./agents.js";
@@ -114,10 +113,6 @@ function formatDelegationRules(): string {
   ].join("\n");
 }
 
-export function formatSubagentUsageExample(): string {
-  return `Use exactly one top-level \`calls\` array:\n\`\`\`json\n{\n  "calls": [\n    {\n      "agent": "agent-name",\n      "prompt": "Prompt sent verbatim to the subagent"\n    }\n  ]\n}\n\`\`\``;
-}
-
 export function formatSubagentUsageErrorExample(): string {
   return `Use the current API shape:\n{\n  "calls": [\n    { "agent": "agent-name", "prompt": "Prompt sent verbatim to the subagent" }\n  ]\n}`;
 }
@@ -172,18 +167,6 @@ The following subagents are available via the \`subagent\` tool:
 ${agentList}
 
 Agent source labels are informational. Project agents come from this repository and can override user agents with the same name. Parent-local workers override ordinary agents only in their owner's catalog; they are not available to root sessions or other agents.
-
-### How to call the subagent tool
-
-${formatSubagentUsageExample()}
-
-Each call runs in an isolated \`pi\` process. Multiple calls may run concurrently.
-
-Fields:
-${formatCallFieldList()}
-
-Rules:
-${formatDelegationRules()}
 
 ### Runtime delegation guards
 
